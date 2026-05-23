@@ -230,7 +230,7 @@ fun ModeSelectionScreen(
             )
         }
 
-        if (device.id == "vivo_x300_pro" || device.id == "xiaomi_14_ultra" || device.id == "xiaomi_15_ultra") {
+        if (device.id == "vivo_x300_pro" || device.id == "xiaomi_14_ultra" || device.id == "xiaomi_15_ultra" || device.id == "samsung_s26_ultra") {
             Spacer(modifier = Modifier.height(16.dp))
 
             // EGOIST Custom-Profil Card

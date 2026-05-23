@@ -109,6 +109,20 @@ class DefaultDataRepository : DataRepository {
                 CameraSensor("Periskop-Telekamera (Kontinuierlicher Zoom)", "Samsung ISOCELL HPE", "200 MP", "1/1.4-Zoll", "f/2.6, 75mm - 100mm Eq. stufenloser Zoom, OIS"),
                 CameraSensor("Ultraweitwinkel-Kamera", "Samsung ISOCELL JN5", "50 MP", "1/2.75-Zoll", "f/2.2, 14mm Eq., Autofokus")
             )
+        ),
+        Device(
+            id = "samsung_s26_ultra",
+            name = "SAMSUNG S26 ULTRA",
+            imageResId = R.drawable.samsung_s26_ultra,
+            displaySpecs = "6,8\" QHD+ Dynamic AMOLED 2X, 4000 Nits, 120 Hz",
+            cameraSpecs = "200 MP HP2 + 50 MP Quad-Tele + 50 MP Periskop",
+            chipset = "Snapdragon 8 Elite / Exynos 2600 (3 nm)",
+            sensors = listOf(
+                CameraSensor("Hauptkamera (Weitwinkel)", "Samsung ISOCELL HP2", "200 MP", "1/1.3-Zoll", "f/1.7, 24mm Eq., OIS, Super Quad Pixel AF"),
+                CameraSensor("Periskop-Telekamera (5x)", "Sony IMX858", "50 MP", "1/2.51-Zoll", "f/3.4, 115mm Eq., OIS"),
+                CameraSensor("Telekamera (3x)", "Sony IMX854", "50 MP", "1/2.52-Zoll", "f/2.4, 67mm Eq., OIS"),
+                CameraSensor("Ultraweitwinkel-Kamera", "Samsung ISOCELL JN3", "50 MP", "1/2.76-Zoll", "f/2.2, 13mm Eq., Autofokus")
+            )
         )
     )
 
@@ -247,6 +261,40 @@ class DefaultDataRepository : DataRepository {
                 "Wähle 'CinemaDNG' bei 4K @ 60 fps für atemberaubende Zeitlupen",
                 "Aktiviere den erweiterten Farbraum 'Rec.2024 Wide Color'",
                 "Nutze die integrierte Gyroskop-Wasserwaage zur perfekten optischen Ausrichtung"
+            )
+        ),
+        // SAMSUNG S26 ULTRA - Photo
+        GcamRecommendation(
+            deviceId = "samsung_s26_ultra",
+            isVideo = false,
+            gcamName = "AGC GCam",
+            gcamVersion = "8.4.300.V9.6",
+            gcamDeveloper = "BigKaka",
+            gcamDownloadUrl = "https://www.celsoazevedo.com/files/android/google-camera/dev-suggested/",
+            xmlName = "EGOISTv44betaAGC8.4v9.6_S26U_test.agc",
+            xmlDownloadUrl = "https://drive.google.com/drive/folders/11iiS5mB63E9YZNdv3lpkI_9gu2l0yO1I?usp=sharing",
+            xmlDescription = "EGOIST custom setup calibrated for Samsung ISOCELL HP2 200MP sensor, balancing ultra crisp detail and clean night dynamic range recovery.",
+            recommendedSettings = listOf(
+                "Use HDR+ Enhanced for scenery shots to recover details",
+                "Select custom library shgv1.2k16.so in AGC Settings",
+                "Double press next to shutter button to load AGC configuration"
+            )
+        ),
+        // SAMSUNG S26 ULTRA - Video
+        GcamRecommendation(
+            deviceId = "samsung_s26_ultra",
+            isVideo = true,
+            gcamName = "Motion Cam",
+            gcamVersion = "v3.1.2-Free",
+            gcamDeveloper = "MotionCam",
+            gcamDownloadUrl = "https://play.google.com/store/apps/details?id=com.motioncam",
+            xmlName = "CinemaDNG_S26U_v1.mc",
+            xmlDownloadUrl = "https://play.google.com/store/apps/details?id=com.motioncam",
+            xmlDescription = "Uncompressed 10-bit DNG RAW video profile designed for ISOCELL HP2 sensor, completely bypassing stock noise processing and shutter-lag.",
+            recommendedSettings = listOf(
+                "Wähle 'CinemaDNG' Format bei 4K @ 30 fps",
+                "Use fast external storage (UFS 4.0) for stable RAW stream",
+                "Set white balance to native 5500K for natural daylight scenes"
             )
         )
     )

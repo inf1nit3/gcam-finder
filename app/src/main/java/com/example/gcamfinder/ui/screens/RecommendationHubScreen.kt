@@ -123,6 +123,7 @@ fun RecommendationHubScreen(
                     when (device.id) {
                         "xiaomi_15_ultra" -> "1Ps5UeSzNfSjvq14P6oLlMyqU7ZQQa0J0"
                         "xiaomi_14_ultra" -> "16TigGiJyM6K8Xk-r9TxObdriJQqRd_N2"
+                        "samsung_s26_ultra" -> "128suL9NhlSxuw-7bC9SUs2Xc0qpMcZTt"
                         else -> "1LyparpXDBuzbmQUIuzc0t96kQKNjmd7v"
                     }
                 } else {
@@ -178,6 +179,7 @@ fun RecommendationHubScreen(
                         val filename = when (device.id) {
                             "xiaomi_15_ultra" -> "EGOIST_1.2k16_15u_12mp.agc"
                             "xiaomi_14_ultra" -> "EGOIST_1.2k16_14u_12mp.agc"
+                            "samsung_s26_ultra" -> "EGOISTv44betaAGC8.4v9.6_S26U_test.agc"
                             else -> "EGOIST_1.2k16_X300P.agc"
                         }
                         val cacheFile = java.io.File(context.cacheDir, filename)
@@ -411,28 +413,33 @@ fun RecommendationHubScreen(
         val apkId = when (device.id) {
             "xiaomi_15_ultra" -> "1UvDMDIDN4g1W43ulj7eO6e6JsYaZGbNk"
             "xiaomi_14_ultra" -> "1mhurWnjvNfU2B72k0y81aPWUunrIebTQ"
+            "samsung_s26_ultra" -> "1FDu0HyNUE6CLsSk_PcvYrbFSTE8KzQvi"
             else -> "1ClY5tXi03fRoDRBZigmR3aL-JsMqsqIi"
         }
         val apkName = when (device.id) {
             "xiaomi_15_ultra" -> "AGC8.4.300_V9.6_ruler15u.apk"
             "xiaomi_14_ultra" -> "AGC8.4.300_V9.6_rulerX14U.apk"
+            "samsung_s26_ultra" -> "AGC8.4.300_V9.6_ruler.apk"
             else -> "AGC8.4.300_V9.6_scan3d.apk"
         }
 
         val xmlId = when (device.id) {
             "xiaomi_15_ultra" -> "1L-mCdB9tzOuv6EbJ68DcYl7oCYtXoirq"
             "xiaomi_14_ultra" -> "1fckhgTQ4oPARif3DjQaNCzstTwBolQDT"
+            "samsung_s26_ultra" -> "1FxkfREsSPYV69k718FhAPn5jpS6s2vgY"
             else -> "1l6CDrl66ZF9khCYd9VSHXXgYzFWWAp6u"
         }
         val xmlName = when (device.id) {
             "xiaomi_15_ultra" -> "EGOIST_1.2k16_15u_12mp.agc"
             "xiaomi_14_ultra" -> "EGOIST_1.2k16_14u_12mp.agc"
+            "samsung_s26_ultra" -> "EGOISTv44betaAGC8.4v9.6_S26U_test.agc"
             else -> "EGOIST_1.2k16_X300P.agc"
         }
 
         val libId = when (device.id) {
             "xiaomi_15_ultra" -> "1nsGHwBzXGadCA_5sC9eVp0hfZXwirKk8"
             "xiaomi_14_ultra" -> "1zSlMC_O0o4p9f7JV0t98en2OEN5cNtw9"
+            "samsung_s26_ultra" -> "10R4poIIk3f14DUzNfrZreFnNdMS7sAxD"
             else -> "1nWk1EhhPTx42tubeTafVXgrH03OSWKVv"
         }
         val libName = "shgv1.2k16.so"
@@ -3512,6 +3519,7 @@ fun RecommendationHubScreen(
                     val apkName = when (device.id) {
                         "xiaomi_15_ultra" -> "AGC8.4.300_V9.6_ruler15u.apk"
                         "xiaomi_14_ultra" -> "AGC8.4.300_V9.6_rulerX14U.apk"
+                        "samsung_s26_ultra" -> "AGC8.4.300_V9.6_ruler.apk"
                         else -> "AGC8.4.300_V9.6_scan3d.apk"
                     }
                     EgoistDownloadCard(
@@ -3529,6 +3537,7 @@ fun RecommendationHubScreen(
                     val xmlName = when (device.id) {
                         "xiaomi_15_ultra" -> "EGOIST_1.2k16_15u_12mp.agc"
                         "xiaomi_14_ultra" -> "EGOIST_1.2k16_14u_12mp.agc"
+                        "samsung_s26_ultra" -> "EGOISTv44betaAGC8.4v9.6_S26U_test.agc"
                         else -> "EGOIST_1.2k16_X300P.agc"
                     }
                     EgoistDownloadCard(
@@ -3655,11 +3664,13 @@ fun RecommendationHubScreen(
                             val xmlName = when (device.id) {
                                 "xiaomi_15_ultra" -> "EGOIST_1.2k16_15u_12mp.agc"
                                 "xiaomi_14_ultra" -> "EGOIST_1.2k16_14u_12mp.agc"
+                                "samsung_s26_ultra" -> "EGOISTv44betaAGC8.4v9.6_S26U_test.agc"
                                 else -> "EGOIST_1.2k16_X300P.agc"
                             }
                             val deviceDisplayName = when (device.id) {
                                 "xiaomi_15_ultra" -> "XIAOMI 15 ULTRA"
                                 "xiaomi_14_ultra" -> "XIAOMI 14 ULTRA"
+                                "samsung_s26_ultra" -> "SAMSUNG S26 Ultra"
                                 else -> "VIVO X300 Pro"
                             }
 
