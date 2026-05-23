@@ -26,8 +26,14 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.platform.LocalContext
 import com.example.gcamfinder.data.Device
 import com.example.gcamfinder.theme.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -37,6 +43,71 @@ fun DeviceSelectionScreen(
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
+
+    // --- APP AUTO-UPDATER STATES ---
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var latestVersion by remember { mutableStateOf("") }
+    var releaseNotes by remember { mutableStateOf("") }
+    var downloadUrl by remember { mutableStateOf("") }
+    
+    var downloadProgress by remember { mutableFloatStateOf(0f) }
+    var downloadStatus by remember { mutableStateOf("IDLE") } // "IDLE", "DOWNLOADING", "SUCCESS", "FAILED"
+
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(Unit) {
+        coroutineScope.launch(Dispatchers.IO) {
+            try {
+                // Get local app version
+                val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+                val currentVersion = packageInfo.versionName ?: "1.0.0"
+
+                // Hit GitHub API for latest release
+                val url = java.net.URL("https://api.github.com/repos/inf1nit3/gcam-finder/releases/latest")
+                val connection = url.openConnection() as java.net.HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.setRequestProperty("Accept", "application/vnd.github.v3+json")
+                connection.connectTimeout = 5000
+                connection.readTimeout = 5000
+                connection.connect()
+
+                if (connection.responseCode == java.net.HttpURLConnection.HTTP_OK) {
+                    val responseText = connection.inputStream.bufferedReader().use { it.readText() }
+                    
+                    // Direct Regex Parsing
+                    val tagPattern = java.util.regex.Pattern.compile("\"tag_name\"\\s*:\\s*\"([^\"]+)\"")
+                    val tagMatcher = tagPattern.matcher(responseText)
+                    val tagVal = if (tagMatcher.find()) tagMatcher.group(1) else ""
+
+                    val bodyPattern = java.util.regex.Pattern.compile("\"body\"\\s*:\\s*\"([^\"]+)\"")
+                    val bodyMatcher = bodyPattern.matcher(responseText)
+                    val rawBody = if (bodyMatcher.find()) bodyMatcher.group(1) else ""
+                    val bodyVal = rawBody.replace("\\n", "\n").replace("\\r", "").replace("\\\"", "\"")
+
+                    // Extract the browser_download_url of the APK asset (matching .apk)
+                    val assetPattern = java.util.regex.Pattern.compile("\"browser_download_url\"\\s*:\\s*\"([^\"]+\\.apk)\"")
+                    val assetMatcher = assetPattern.matcher(responseText)
+                    val apkUrl = if (assetMatcher.find()) assetMatcher.group(1) else ""
+
+                    // Compare tag name (stripping 'v' prefix if present)
+                    val cleanTag = tagVal.trim().lowercase().removePrefix("v")
+                    val cleanLocal = currentVersion.trim().lowercase().removePrefix("v")
+
+                    if (cleanTag.isNotBlank() && cleanTag != cleanLocal) {
+                        latestVersion = tagVal
+                        releaseNotes = bodyVal.ifBlank { "Systemoptimierungen und neue Sensorunterstützung." }
+                        downloadUrl = apkUrl
+                        withContext(Dispatchers.Main) {
+                            showUpdateDialog = true
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
     val filteredDevices = remember(searchQuery, devices) {
         if (searchQuery.isBlank()) {
             devices
@@ -142,6 +213,196 @@ fun DeviceSelectionScreen(
                         device = device,
                         onClick = { onDeviceSelected(device.id) }
                     )
+                }
+            }
+        }
+
+        // --- PREMIUM AUTO-UPDATE DIALOG ---
+        if (showUpdateDialog) {
+            androidx.compose.ui.window.Dialog(
+                onDismissRequest = { 
+                    if (downloadStatus != "DOWNLOADING") showUpdateDialog = false 
+                },
+                properties = androidx.compose.ui.window.DialogProperties(
+                    dismissOnBackPress = downloadStatus != "DOWNLOADING",
+                    dismissOnClickOutside = false
+                )
+            ) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, ApertureGold.copy(alpha = 0.5f), RoundedCornerShape(18.dp)),
+                    colors = CardDefaults.cardColors(containerColor = SurfaceCard),
+                    shape = RoundedCornerShape(18.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        // Premium Header Icon
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(ApertureGold.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "🔄",
+                                fontSize = 28.sp
+                            )
+                        }
+                        
+                        Spacer(modifier = Modifier.height(16.dp))
+                        
+                        Text(
+                            text = "UPDATE VERFÜGBAR",
+                            style = Typography.labelMedium.copy(color = ApertureGold, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Neue Version $latestVersion",
+                            style = Typography.titleLarge.copy(color = TextPrimary, fontWeight = FontWeight.Bold)
+                        )
+                        
+                        Spacer(modifier = Modifier.height(12.dp))
+                        
+                        // Release Notes Container
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 180.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(AmoledBlack)
+                                .border(0.5.dp, BorderSlate, RoundedCornerShape(8.dp))
+                                .padding(12.dp)
+                        ) {
+                            Text(
+                                text = "ÄNDERUNGSPROTOKOLL:",
+                                style = Typography.labelMedium.copy(color = ZeissCyan, fontWeight = FontWeight.Bold, fontSize = 8.sp)
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Box(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                                Text(
+                                    text = releaseNotes,
+                                    style = Typography.bodyMedium.copy(color = TextSecondary, fontSize = 11.sp, lineHeight = 16.sp)
+                                )
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(20.dp))
+                        
+                        // Status / Download Bar
+                        if (downloadStatus == "DOWNLOADING") {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                LinearProgressIndicator(
+                                    progress = { downloadProgress },
+                                    color = ZeissCyan,
+                                    trackColor = BorderSlate,
+                                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = String.format(java.util.Locale.US, "Herunterladen... %.0f%%", downloadProgress * 100),
+                                    style = Typography.bodyMedium.copy(color = ZeissCyan, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                )
+                            }
+                        } else {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                // Later Button
+                                Button(
+                                    onClick = { showUpdateDialog = false },
+                                    colors = ButtonDefaults.buttonColors(containerColor = BorderSlate, contentColor = TextPrimary),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(
+                                        text = "Später",
+                                        style = Typography.labelLarge.copy(color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    )
+                                }
+                                
+                                // Download & Install Button
+                                Button(
+                                    onClick = {
+                                        downloadStatus = "DOWNLOADING"
+                                        downloadProgress = 0f
+                                        coroutineScope.launch(Dispatchers.IO) {
+                                            try {
+                                                val connection = java.net.URL(downloadUrl).openConnection() as java.net.HttpURLConnection
+                                                connection.requestMethod = "GET"
+                                                connection.connect()
+                                                
+                                                if (connection.responseCode == java.net.HttpURLConnection.HTTP_OK) {
+                                                    val fileLength = connection.contentLength
+                                                    val input = connection.inputStream
+                                                    val apkFile = java.io.File(context.cacheDir, "app-update.apk")
+                                                    val output = java.io.FileOutputStream(apkFile)
+                                                    
+                                                    val data = ByteArray(4096)
+                                                    var total: Long = 0
+                                                    var count: Int
+                                                    while (input.read(data).also { count = it } != -1) {
+                                                        total += count
+                                                        if (fileLength > 0) {
+                                                            downloadProgress = total.toFloat() / fileLength.toFloat()
+                                                        }
+                                                        output.write(data, 0, count)
+                                                    }
+                                                    output.flush()
+                                                    output.close()
+                                                    input.close()
+                                                    
+                                                    downloadStatus = "SUCCESS"
+                                                    withContext(Dispatchers.Main) {
+                                                        // Trigger Installation!
+                                                        try {
+                                                            val authority = "com.example.gcamfinder.fileprovider"
+                                                            val apkUri = androidx.core.content.FileProvider.getUriForFile(context, authority, apkFile)
+                                                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                                                                setDataAndType(apkUri, "application/vnd.android.package-archive")
+                                                                flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                                            }
+                                                            context.startActivity(intent)
+                                                        } catch (instEx: Exception) {
+                                                            instEx.printStackTrace()
+                                                            android.widget.Toast.makeText(context, "Installationsfehler: ${instEx.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
+                                                        }
+                                                        showUpdateDialog = false
+                                                        downloadStatus = "IDLE"
+                                                    }
+                                                } else {
+                                                    downloadStatus = "FAILED"
+                                                    withContext(Dispatchers.Main) {
+                                                        android.widget.Toast.makeText(context, "Download fehlgeschlagen (HTTP ${connection.responseCode})", android.widget.Toast.LENGTH_LONG).show()
+                                                        downloadStatus = "IDLE"
+                                                    }
+                                                }
+                                            } catch (e: Exception) {
+                                                e.printStackTrace()
+                                                downloadStatus = "FAILED"
+                                                withContext(Dispatchers.Main) {
+                                                    android.widget.Toast.makeText(context, "Fehler: ${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
+                                                    downloadStatus = "IDLE"
+                                                }
+                                            }
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = ApertureGold, contentColor = AmoledBlack),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.weight(1.2f)
+                                ) {
+                                    Text(
+                                        text = "Aktualisieren",
+                                        style = Typography.labelLarge.copy(color = AmoledBlack, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
