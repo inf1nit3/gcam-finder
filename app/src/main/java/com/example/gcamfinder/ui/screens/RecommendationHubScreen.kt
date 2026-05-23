@@ -119,7 +119,11 @@ fun RecommendationHubScreen(
     val exoPlayer = if (isEgoist || isJ0qz) {
         remember {
             ExoPlayer.Builder(context).build().apply {
-                val videoId = if (isEgoist) "1LyparpXDBuzbmQUIuzc0t96kQKNjmd7v" else "1BqJKewk4RKPlTWw667dk9GHn9mbsEeFg"
+                val videoId = if (isEgoist) {
+                    if (device.id == "xiaomi_15_ultra") "1Ps5UeSzNfSjvq14P6oLlMyqU7ZQQa0J0" else "1LyparpXDBuzbmQUIuzc0t96kQKNjmd7v"
+                } else {
+                    "1BqJKewk4RKPlTWw667dk9GHn9mbsEeFg"
+                }
                 val mediaItem = androidx.media3.common.MediaItem.fromUri("https://docs.google.com/uc?export=download&confirm=t&id=$videoId")
                 setMediaItem(mediaItem)
                 prepare()
@@ -167,7 +171,9 @@ fun RecommendationHubScreen(
             coroutineScope.launch {
                 try {
                     withContext(Dispatchers.IO) {
-                        val cacheFile = java.io.File(context.cacheDir, "EGOIST_1.2k16_X300P.agc")
+                        val isXiaomi15U = device.id == "xiaomi_15_ultra"
+                        val filename = if (isXiaomi15U) "EGOIST_1.2k16_15u_12mp.agc" else "EGOIST_1.2k16_X300P.agc"
+                        val cacheFile = java.io.File(context.cacheDir, filename)
                         if (cacheFile.exists()) {
                             context.contentResolver.openOutputStream(uri)?.use { outputStream ->
                                 cacheFile.inputStream().use { inputStream ->
@@ -347,6 +353,26 @@ fun RecommendationHubScreen(
         }
     }
 
+    fun triggerApkInstallationByName(ctx: android.content.Context, fileName: String) {
+        try {
+            val cacheFile = File(ctx.cacheDir, fileName)
+            if (!cacheFile.exists()) {
+                android.widget.Toast.makeText(ctx, "APK-Datei nicht gefunden.", android.widget.Toast.LENGTH_SHORT).show()
+                return
+            }
+            val authority = "com.example.gcamfinder.fileprovider"
+            val apkUri = androidx.core.content.FileProvider.getUriForFile(ctx, authority, cacheFile)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(apkUri, "application/vnd.android.package-archive")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+            }
+            ctx.startActivity(intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            android.widget.Toast.makeText(ctx, "Fehler beim Starten der Installation: ${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+
     fun triggerApkInstallation(context: android.content.Context) {
         try {
             val cacheFile = java.io.File(context.cacheDir, "AGC8.4.300_V9.6_scan3d.apk")
@@ -375,12 +401,22 @@ fun RecommendationHubScreen(
         egoistXmlProgress = 0f
         egoistLibProgress = 0f
 
+        val isXiaomi15U = device.id == "xiaomi_15_ultra"
+        val apkId = if (isXiaomi15U) "1UvDMDIDN4g1W43ulj7eO6e6JsYaZGbNk" else "1ClY5tXi03fRoDRBZigmR3aL-JsMqsqIi"
+        val apkName = if (isXiaomi15U) "AGC8.4.300_V9.6_ruler15u.apk" else "AGC8.4.300_V9.6_scan3d.apk"
+
+        val xmlId = if (isXiaomi15U) "1L-mCdB9tzOuv6EbJ68DcYl7oCYtXoirq" else "1l6CDrl66ZF9khCYd9VSHXXgYzFWWAp6u"
+        val xmlName = if (isXiaomi15U) "EGOIST_1.2k16_15u_12mp.agc" else "EGOIST_1.2k16_X300P.agc"
+
+        val libId = if (isXiaomi15U) "1nsGHwBzXGadCA_5sC9eVp0hfZXwirKk8" else "1nWk1EhhPTx42tubeTafVXgrH03OSWKVv"
+        val libName = "shgv1.2k16.so"
+
         coroutineScope.launch {
             // 1. Download APK
             launch(Dispatchers.IO) {
                 val success = downloadFileToCache(
-                    url = "https://docs.google.com/uc?export=download&confirm=t&id=1ClY5tXi03fRoDRBZigmR3aL-JsMqsqIi",
-                    fileName = "AGC8.4.300_V9.6_scan3d.apk",
+                    url = "https://docs.google.com/uc?export=download&confirm=t&id=$apkId",
+                    fileName = apkName,
                     context = context
                 ) { progress ->
                     egoistApkProgress = progress
@@ -388,7 +424,7 @@ fun RecommendationHubScreen(
                 if (success) {
                     egoistApkStatus = "SUCCESS"
                     withContext(Dispatchers.Main) {
-                        triggerApkInstallation(context)
+                        triggerApkInstallationByName(context, apkName)
                     }
                 } else {
                     egoistApkStatus = "FAILED"
@@ -398,8 +434,8 @@ fun RecommendationHubScreen(
             // 2. Download XML
             launch(Dispatchers.IO) {
                 val success = downloadFileToCache(
-                    url = "https://docs.google.com/uc?export=download&confirm=t&id=1l6CDrl66ZF9khCYd9VSHXXgYzFWWAp6u",
-                    fileName = "EGOIST_1.2k16_X300P.agc",
+                    url = "https://docs.google.com/uc?export=download&confirm=t&id=$xmlId",
+                    fileName = xmlName,
                     context = context
                 ) { progress ->
                     egoistXmlProgress = progress
@@ -410,8 +446,8 @@ fun RecommendationHubScreen(
             // 3. Download LIB
             launch(Dispatchers.IO) {
                 val success = downloadFileToCache(
-                    url = "https://docs.google.com/uc?export=download&confirm=t&id=1nWk1EhhPTx42tubeTafVXgrH03OSWKVv",
-                    fileName = "shgv1.2k16.so",
+                    url = "https://docs.google.com/uc?export=download&confirm=t&id=$libId",
+                    fileName = libName,
                     context = context
                 ) { progress ->
                     egoistLibProgress = progress
@@ -557,25 +593,6 @@ fun RecommendationHubScreen(
         }
     }
 
-    fun triggerApkInstallationByName(ctx: android.content.Context, fileName: String) {
-        try {
-            val cacheFile = File(ctx.cacheDir, fileName)
-            if (!cacheFile.exists()) {
-                android.widget.Toast.makeText(ctx, "APK-Datei nicht gefunden.", android.widget.Toast.LENGTH_SHORT).show()
-                return
-            }
-            val authority = "com.example.gcamfinder.fileprovider"
-            val apkUri = androidx.core.content.FileProvider.getUriForFile(ctx, authority, cacheFile)
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(apkUri, "application/vnd.android.package-archive")
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
-            }
-            ctx.startActivity(intent)
-        } catch (e: Exception) {
-            e.printStackTrace()
-            android.widget.Toast.makeText(ctx, "Fehler beim Starten der Installation: ${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
-        }
-    }
 
     fun extractLeitzZip(ctx: android.content.Context, zipFile: File): Boolean {
         return try {
@@ -3466,25 +3483,27 @@ fun RecommendationHubScreen(
 
                 // APK Card
                 item {
+                    val apkName = if (device.id == "xiaomi_15_ultra") "AGC8.4.300_V9.6_ruler15u.apk" else "AGC8.4.300_V9.6_scan3d.apk"
                     EgoistDownloadCard(
                         title = "1. AGC 8.4v9.6 Kamera-APK",
                         progress = egoistApkProgress,
                         status = egoistApkStatus,
                         activeColor = ApertureGold,
                         actionButtonText = "Installieren",
-                        onActionClick = { triggerApkInstallation(context) }
+                        onActionClick = { triggerApkInstallationByName(context, apkName) }
                     )
                 }
 
                 // XML Card
                 item {
+                    val xmlName = if (device.id == "xiaomi_15_ultra") "EGOIST_1.2k16_15u_12mp.agc" else "EGOIST_1.2k16_X300P.agc"
                     EgoistDownloadCard(
                         title = "2. EGOIST XML-Konfiguration (.agc)",
                         progress = egoistXmlProgress,
                         status = egoistXmlStatus,
                         activeColor = ZeissCyan,
                         actionButtonText = "Ordner wählen & Speichern",
-                        onActionClick = { saveEgoistXmlLauncher.launch("EGOIST_1.2k16_X300P.agc") }
+                        onActionClick = { saveEgoistXmlLauncher.launch(xmlName) }
                     )
                 }
 
@@ -3498,6 +3517,72 @@ fun RecommendationHubScreen(
                         actionButtonText = "Ordner wählen & Speichern",
                         onActionClick = { saveEgoistLibLauncher.launch("shgv1.2k16.so") }
                     )
+                }
+
+                // EGOIST Profiles Explanation Card
+                item {
+                    var isProfilesExpanded by remember { mutableStateOf(false) }
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, BorderSlate, RoundedCornerShape(18.dp)),
+                        colors = CardDefaults.cardColors(containerColor = SurfaceCard)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { isProfilesExpanded = !isProfilesExpanded }
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.Info,
+                                        contentDescription = null,
+                                        tint = ApertureGold,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "🎓 EGOIST Profil-Erklärungen (1-12)",
+                                        style = Typography.titleMedium.copy(color = TextPrimary, fontWeight = FontWeight.Bold)
+                                    )
+                                }
+                                Text(
+                                    text = if (isProfilesExpanded) "Einklappen ▲" else "Anzeigen ▼",
+                                    style = Typography.labelMedium.copy(color = ApertureGold, fontWeight = FontWeight.Bold)
+                                )
+                            }
+                            
+                            if (isProfilesExpanded) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                HorizontalDivider(color = BorderSlate.copy(alpha = 0.5f), thickness = 0.5.dp)
+                                Spacer(modifier = Modifier.height(12.dp))
+                                
+                                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    ProfileDescItem("Profil 1", "Hauptprofil / HHC (Hohe Lichterkontrolle)", "Allround-Profil für jede Situation. Es hat einen etwas dunkleren, kontrastreichen Look (ähnlich der alten Version).", "HDR+ Erweitert (HDRe), aber alle 3 Modi (ZSL, HDRe, Nachtsicht) nutzbar.")
+                                    ProfileDescItem("Profil 2", "Hell / LHC (Geringe Lichterkontrolle)", "Identisch mit Hauptprofil 1, aber deutlich heller abgestimmt mit weniger Lichterkontrolle – ideal für alle, die sich seit Tag 1 ein helleres Profil gewünscht haben. 😂", "HDR+ Erweitert (HDRe).")
+                                    ProfileDescItem("Profil 3", "UltraHDR", "Basiert auf Profil 1, nutzt jedoch 'Merge 3' zur drastischen Rauschreduzierung in extrem kontrastreichen Szenen, bei denen in dunklen Schattenbereichen sonst Bildrauschen entstehen würde.", "HDR-Szenen.")
+                                    ProfileDescItem("Profil 4", "Bewegung (Motion)", "Nutzt 7 Frames und 'Merge 0' – perfekt für schnelle Schnappschüsse von Kindern, Haustieren und sich bewegenden Objekten.", "HDR+ Erweitert oder Nachtsicht. Wichtig: In diesem Profil kein ZSL (Zero Shutter Lag) nutzen!")
+                                    ProfileDescItem("Profil 5", "SuperCrispy (Extrem Knackig)", "Hervorragend geeignet für sehr dunkle Szenen, um perfektes Tiefschwarz zu erzielen, oder einfach zum Experimentieren.", "HDR+ Erweitert.")
+                                    ProfileDescItem("Profil 6", "FlatCrispy / LC (Geringer Kontrast)", "Identisch mit Profil 5, aber mit weicherem Kontrastverlauf für ein flacheres Bild.", "Alle 3 Modi.")
+                                    ProfileDescItem("Profil 7", "Digitaler Zoom", "Sehr weiches, schmeichelhaftes Profil. Hervorragend geeignet für Porträts, Hauttöne und bei Nutzung des digitalen Zooms.", "Porträtaufnahmen / Digitalzoom.")
+                                    ProfileDescItem("Profil 8", "SoftNight (Weiche Nacht)", "Ähnlich wie Profil 7, aber speziell für mittlere bis schlechte Lichtverhältnisse (Dämmerung/Nacht).", "Low-Light / Nachtszenen.")
+                                    ProfileDescItem("Profil 9", "Flat LDR (Flaches LDR)", "Identisch mit Profil 6 (FlatCrispy), jedoch speziell kalibriert für Tageslicht und sehr gute Lichtverhältnisse.", "Tageslicht.")
+                                    ProfileDescItem("Profil 10", "Lebendig / Knallig (Vivid/Punchy)", "Bietet extrem lebendige, farbenfrohe und kontrastreiche Aufnahmen. Ideal für Food-Fotografie, Blumen und sommerliche Landschaftsaufnahmen.", "Farbintensive Szenen (Essen, Blumen, etc.).")
+                                    ProfileDescItem("Profil 11", "Schwarz-Weiß (B&W)", "Klassische Monochrom-Fotografie mit tiefer Kontrastzeichnung.", "Monochrom-Aufnahmen.")
+                                    ProfileDescItem("Profil 12", "True LDR (Echtes LDR)", "Ein Profil mit extrem niedrigem Dynamikumfang und extrem hohem Kontrast. Erzeugt einen dramatischen Analogfilm-Look, bei dem helle Lichter bewusst ausbrennen.", "Dramatischer Retro-Look.")
+                                    
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "💡 Hinweis des Entwicklers: Die Profile 5, 6, 8, 9, 10, 11 und 12 wurden primär zum eigenen Vergnügen erstellt (Spaß-Profile). Du kannst sie in den AGC-Einstellungen einfach ausblenden, wenn du sie nicht benötigst.",
+                                        style = Typography.bodyMedium.copy(color = TextSecondary, fontSize = 11.sp, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // German Step-by-Step checklist instructions
@@ -3533,6 +3618,10 @@ fun RecommendationHubScreen(
 
                             Spacer(modifier = Modifier.height(16.dp))
 
+                            val isXiaomi15U = device.id == "xiaomi_15_ultra"
+                            val xmlName = if (isXiaomi15U) "EGOIST_1.2k16_15u_12mp.agc" else "EGOIST_1.2k16_X300P.agc"
+                            val deviceDisplayName = if (isXiaomi15U) "XIAOMI 15 ULTRA" else "VIVO X300 Pro"
+
                             val steps = listOf(
                                 "App-Berechtigungen gewähren" to "Nach der Installation der AGC 8.4 App diese starten und alle angeforderten Berechtigungen (Kamera, Speicher, Mikrofon) erteilen.",
                                 "Schnellmenü öffnen" to "Tippe oben links auf dem Hauptbildschirm der Kamera auf das Zahnrad-Symbol.",
@@ -3540,14 +3629,14 @@ fun RecommendationHubScreen(
                                 "Library-Kopierer aufrufen" to "Scrolle nach unten, wähle den Bereich 'Libraries' und tippe auf 'Copy third-party lib to app'.",
                                 "Custom-Library (.so) auswählen" to "Navigiere im System-Dateidialog zu der gespeicherten 'shgv1.2k16.so' Datei und wähle diese aus.",
                                 "XML-Importbereich öffnen" to "Gehe in den 'Weitere Einstellungen' zurück, scrolle zum Bereich 'Configs' und tippe auf 'Import'.",
-                                "EGOIST XML (.agc) auswählen" to "Wähle im Dateimanager die gespeicherte Konfigurationsdatei 'EGOIST_1.2k16_X300P.agc' aus.",
+                                "EGOIST XML (.agc) auswählen" to "Wähle im Dateimanager die gespeicherte Konfigurationsdatei '$xmlName' aus.",
                                 "Zum Hauptbildschirm zurückkehren" to "Drücke die Zurück-Taste deines Smartphones, um zum Hauptbildschirm der GCam zurückzukehren.",
                                 "Schnell-Konfiguration laden" to "Tippe erneut oben links auf das Zahnrad-Symbol und wähle unten links die Option 'Load Configs'.",
-                                "EGOIST Konfiguration laden" to "Wähle die importierte 'EGOIST_1.2k16_X300P.agc' aus und bestätige den Vorgang mit 'Load'.",
+                                "EGOIST Konfiguration laden" to "Wähle die importierte '$xmlName' aus und bestätige den Vorgang mit 'Load'.",
                                 "Erneut in die tiefen Einstellungen" to "Gehe wieder oben links auf das Zahnrad-Symbol und tippe unten rechts erneut auf 'Weitere Einstellungen'.",
                                 "Custom-Library aktivieren" to "Wähle 'Libraries' und tippe oben auf 'Load custom library'. Wähle 'shgv1.2k16.so' aus. WICHTIG: Mache diesen Schritt zwingend 2x hintereinander!",
                                 "Zurück zum Hauptbildschirm" to "Gehe zurück zum Hauptbildschirm. Die Library und XML-Konfiguration sind nun aktiv geladen.",
-                                "Enjoy EGOIST!" to "Viel Spaß mit extremer Schärfe, lebendigen Zeiss-Farben und optimiertem Rauschen auf deinem VIVO X300 Pro!"
+                                "Enjoy EGOIST!" to "Viel Spaß mit extremer Schärfe, lebendigen Zeiss-Farben und optimiertem Rauschen auf deinem $deviceDisplayName!"
                             )
 
                             steps.forEachIndexed { index, pair ->
@@ -4552,6 +4641,52 @@ fun EgoistDownloadCard(
                 }
             }
         }
+    }
+}
+
+@Composable
+fun ProfileDescItem(
+    number: String,
+    title: String,
+    desc: String,
+    recommended: String,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(AmoledBlack.copy(alpha = 0.4f))
+            .padding(10.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(ZeissCyan.copy(alpha = 0.15f))
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    text = number,
+                    style = Typography.labelMedium.copy(color = ZeissCyan, fontWeight = FontWeight.Bold, fontSize = 9.sp)
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = title,
+                style = Typography.titleSmall.copy(color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            )
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = desc,
+            style = Typography.bodyMedium.copy(color = TextSecondary, fontSize = 11.sp, lineHeight = 15.sp)
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = "Empfohlener Modus: $recommended",
+            style = Typography.bodyMedium.copy(color = ApertureGold, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+        )
     }
 }
 

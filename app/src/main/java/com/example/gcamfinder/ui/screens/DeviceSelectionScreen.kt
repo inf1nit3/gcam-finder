@@ -75,18 +75,18 @@ fun DeviceSelectionScreen(
                 if (connection.responseCode == java.net.HttpURLConnection.HTTP_OK) {
                     val responseText = connection.inputStream.bufferedReader().use { it.readText() }
                     
-                    // Direct Regex Parsing
-                    val tagPattern = java.util.regex.Pattern.compile("\"tag_name\"\\s*:\\s*\"([^\"]+)\"")
+                    // Direct Regex Parsing (Robust against escaped quotes & formatting)
+                    val tagPattern = java.util.regex.Pattern.compile("\"tag_name\"\\s*:\\s*\"((?:[^\n\"\\\\]|\\\\.)*)\"")
                     val tagMatcher = tagPattern.matcher(responseText)
                     val tagVal = if (tagMatcher.find()) tagMatcher.group(1) else ""
 
-                    val bodyPattern = java.util.regex.Pattern.compile("\"body\"\\s*:\\s*\"([^\"]+)\"")
+                    val bodyPattern = java.util.regex.Pattern.compile("\"body\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"")
                     val bodyMatcher = bodyPattern.matcher(responseText)
                     val rawBody = if (bodyMatcher.find()) bodyMatcher.group(1) else ""
                     val bodyVal = rawBody.replace("\\n", "\n").replace("\\r", "").replace("\\\"", "\"")
 
                     // Extract the browser_download_url of the APK asset (matching .apk)
-                    val assetPattern = java.util.regex.Pattern.compile("\"browser_download_url\"\\s*:\\s*\"([^\"]+\\.apk)\"")
+                    val assetPattern = java.util.regex.Pattern.compile("\"browser_download_url\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*?\\.apk)\"")
                     val assetMatcher = assetPattern.matcher(responseText)
                     val apkUrl = if (assetMatcher.find()) assetMatcher.group(1) else ""
 
