@@ -120,7 +120,11 @@ fun RecommendationHubScreen(
         remember {
             ExoPlayer.Builder(context).build().apply {
                 val videoId = if (isEgoist) {
-                    if (device.id == "xiaomi_15_ultra") "1Ps5UeSzNfSjvq14P6oLlMyqU7ZQQa0J0" else "1LyparpXDBuzbmQUIuzc0t96kQKNjmd7v"
+                    when (device.id) {
+                        "xiaomi_15_ultra" -> "1Ps5UeSzNfSjvq14P6oLlMyqU7ZQQa0J0"
+                        "xiaomi_14_ultra" -> "16TigGiJyM6K8Xk-r9TxObdriJQqRd_N2"
+                        else -> "1LyparpXDBuzbmQUIuzc0t96kQKNjmd7v"
+                    }
                 } else {
                     "1BqJKewk4RKPlTWw667dk9GHn9mbsEeFg"
                 }
@@ -171,8 +175,11 @@ fun RecommendationHubScreen(
             coroutineScope.launch {
                 try {
                     withContext(Dispatchers.IO) {
-                        val isXiaomi15U = device.id == "xiaomi_15_ultra"
-                        val filename = if (isXiaomi15U) "EGOIST_1.2k16_15u_12mp.agc" else "EGOIST_1.2k16_X300P.agc"
+                        val filename = when (device.id) {
+                            "xiaomi_15_ultra" -> "EGOIST_1.2k16_15u_12mp.agc"
+                            "xiaomi_14_ultra" -> "EGOIST_1.2k16_14u_12mp.agc"
+                            else -> "EGOIST_1.2k16_X300P.agc"
+                        }
                         val cacheFile = java.io.File(context.cacheDir, filename)
                         if (cacheFile.exists()) {
                             context.contentResolver.openOutputStream(uri)?.use { outputStream ->
@@ -401,14 +408,33 @@ fun RecommendationHubScreen(
         egoistXmlProgress = 0f
         egoistLibProgress = 0f
 
-        val isXiaomi15U = device.id == "xiaomi_15_ultra"
-        val apkId = if (isXiaomi15U) "1UvDMDIDN4g1W43ulj7eO6e6JsYaZGbNk" else "1ClY5tXi03fRoDRBZigmR3aL-JsMqsqIi"
-        val apkName = if (isXiaomi15U) "AGC8.4.300_V9.6_ruler15u.apk" else "AGC8.4.300_V9.6_scan3d.apk"
+        val apkId = when (device.id) {
+            "xiaomi_15_ultra" -> "1UvDMDIDN4g1W43ulj7eO6e6JsYaZGbNk"
+            "xiaomi_14_ultra" -> "1mhurWnjvNfU2B72k0y81aPWUunrIebTQ"
+            else -> "1ClY5tXi03fRoDRBZigmR3aL-JsMqsqIi"
+        }
+        val apkName = when (device.id) {
+            "xiaomi_15_ultra" -> "AGC8.4.300_V9.6_ruler15u.apk"
+            "xiaomi_14_ultra" -> "AGC8.4.300_V9.6_rulerX14U.apk"
+            else -> "AGC8.4.300_V9.6_scan3d.apk"
+        }
 
-        val xmlId = if (isXiaomi15U) "1L-mCdB9tzOuv6EbJ68DcYl7oCYtXoirq" else "1l6CDrl66ZF9khCYd9VSHXXgYzFWWAp6u"
-        val xmlName = if (isXiaomi15U) "EGOIST_1.2k16_15u_12mp.agc" else "EGOIST_1.2k16_X300P.agc"
+        val xmlId = when (device.id) {
+            "xiaomi_15_ultra" -> "1L-mCdB9tzOuv6EbJ68DcYl7oCYtXoirq"
+            "xiaomi_14_ultra" -> "1fckhgTQ4oPARif3DjQaNCzstTwBolQDT"
+            else -> "1l6CDrl66ZF9khCYd9VSHXXgYzFWWAp6u"
+        }
+        val xmlName = when (device.id) {
+            "xiaomi_15_ultra" -> "EGOIST_1.2k16_15u_12mp.agc"
+            "xiaomi_14_ultra" -> "EGOIST_1.2k16_14u_12mp.agc"
+            else -> "EGOIST_1.2k16_X300P.agc"
+        }
 
-        val libId = if (isXiaomi15U) "1nsGHwBzXGadCA_5sC9eVp0hfZXwirKk8" else "1nWk1EhhPTx42tubeTafVXgrH03OSWKVv"
+        val libId = when (device.id) {
+            "xiaomi_15_ultra" -> "1nsGHwBzXGadCA_5sC9eVp0hfZXwirKk8"
+            "xiaomi_14_ultra" -> "1zSlMC_O0o4p9f7JV0t98en2OEN5cNtw9"
+            else -> "1nWk1EhhPTx42tubeTafVXgrH03OSWKVv"
+        }
         val libName = "shgv1.2k16.so"
 
         coroutineScope.launch {
@@ -3483,7 +3509,11 @@ fun RecommendationHubScreen(
 
                 // APK Card
                 item {
-                    val apkName = if (device.id == "xiaomi_15_ultra") "AGC8.4.300_V9.6_ruler15u.apk" else "AGC8.4.300_V9.6_scan3d.apk"
+                    val apkName = when (device.id) {
+                        "xiaomi_15_ultra" -> "AGC8.4.300_V9.6_ruler15u.apk"
+                        "xiaomi_14_ultra" -> "AGC8.4.300_V9.6_rulerX14U.apk"
+                        else -> "AGC8.4.300_V9.6_scan3d.apk"
+                    }
                     EgoistDownloadCard(
                         title = "1. AGC 8.4v9.6 Kamera-APK",
                         progress = egoistApkProgress,
@@ -3496,7 +3526,11 @@ fun RecommendationHubScreen(
 
                 // XML Card
                 item {
-                    val xmlName = if (device.id == "xiaomi_15_ultra") "EGOIST_1.2k16_15u_12mp.agc" else "EGOIST_1.2k16_X300P.agc"
+                    val xmlName = when (device.id) {
+                        "xiaomi_15_ultra" -> "EGOIST_1.2k16_15u_12mp.agc"
+                        "xiaomi_14_ultra" -> "EGOIST_1.2k16_14u_12mp.agc"
+                        else -> "EGOIST_1.2k16_X300P.agc"
+                    }
                     EgoistDownloadCard(
                         title = "2. EGOIST XML-Konfiguration (.agc)",
                         progress = egoistXmlProgress,
@@ -3618,9 +3652,16 @@ fun RecommendationHubScreen(
 
                             Spacer(modifier = Modifier.height(16.dp))
 
-                            val isXiaomi15U = device.id == "xiaomi_15_ultra"
-                            val xmlName = if (isXiaomi15U) "EGOIST_1.2k16_15u_12mp.agc" else "EGOIST_1.2k16_X300P.agc"
-                            val deviceDisplayName = if (isXiaomi15U) "XIAOMI 15 ULTRA" else "VIVO X300 Pro"
+                            val xmlName = when (device.id) {
+                                "xiaomi_15_ultra" -> "EGOIST_1.2k16_15u_12mp.agc"
+                                "xiaomi_14_ultra" -> "EGOIST_1.2k16_14u_12mp.agc"
+                                else -> "EGOIST_1.2k16_X300P.agc"
+                            }
+                            val deviceDisplayName = when (device.id) {
+                                "xiaomi_15_ultra" -> "XIAOMI 15 ULTRA"
+                                "xiaomi_14_ultra" -> "XIAOMI 14 ULTRA"
+                                else -> "VIVO X300 Pro"
+                            }
 
                             val steps = listOf(
                                 "App-Berechtigungen gewähren" to "Nach der Installation der AGC 8.4 App diese starten und alle angeforderten Berechtigungen (Kamera, Speicher, Mikrofon) erteilen.",
