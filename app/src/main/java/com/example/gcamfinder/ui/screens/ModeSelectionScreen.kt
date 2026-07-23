@@ -24,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.gcamfinder.data.Device
+import com.example.gcamfinder.data.EgoistProfiles
 import com.example.gcamfinder.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -167,10 +168,10 @@ fun ModeSelectionScreen(
         // Foto Mode Card
         ModeCard(
             title = "FOTO",
-            subtitle = "Beste Bildqualität & Dynamik",
-            description = "Optimiert für maximalen Dynamikumfang (HDR+ Erweitert), natürliche Leica/Zeiss-Farben, extreme Tele-Zoom-Details und erstklassige Rauschunterdrückung bei Nacht.",
+            subtitle = "AGC mit gerätespezifischer Config",
+            description = "Lädt die für dieses Gerät mitgelieferte AGC-APK und Konfiguration. Verfügbare Objektive und Funktionen hängen weiterhin von Kamera2-Freigaben und Firmware ab.",
             tagColor = ApertureGold,
-            tagText = "HDR+ & RAW",
+            tagText = "AGC 8.4 & CONFIG",
             onClick = {
                 if (device.id == "xiaomi_17_ultra") {
                     onModeSelected(false, "xiaomi_foto")
@@ -185,10 +186,10 @@ fun ModeSelectionScreen(
         // Film Mode Card
         ModeCard(
             title = "FILM / VIDEO",
-            subtitle = "Professionelles RAW-Video",
-            description = "Ermöglicht verlustfreie CinemaDNG-Aufnahmen (RAW) mit Motion Cam. Umgeht die herstellerseitige Videokompression vollständig für kinoreife Ergebnisse.",
+            subtitle = "MotionCam testen",
+            description = "Öffnet die MotionCam-Testversion im Play Store. Welche RAW-Modi, Objektive, Auflösungen und Bildraten verfügbar sind, muss auf der jeweiligen Firmware geprüft werden.",
             tagColor = ZeissCyan,
-            tagText = "RAW-VIDEO & 4K60",
+            tagText = "FIRMWAREABHÄNGIG",
             onClick = { onModeSelected(true, "default") }
         )
 
@@ -211,7 +212,7 @@ fun ModeSelectionScreen(
             ModeCard(
                 title = "LEICA M9 / LEITZ MOD",
                 subtitle = "Leica M9 Cloud-Processing freischalten",
-                description = "Nutze das exklusive Leica M9 Essential Cloud-Processing für echte 50-Megapixel-Aufnahmen direkt in der originalen Kamera-App. Erfordert Magisk (Root) + LSPosed und das dreiteilige Installationspaket.",
+                description = "Experimentelles Paket für Leica-M9-Cloud-Processing in der originalen Kamera-App. Erfordert xiaomi.eu, Magisk und LSPosed; die beiden mitgelieferten Modul-APKs sind projekt-/debug-signiert.",
                 tagColor = Color(0xFFD21F1B), // Leica Crimson Red
                 tagText = "MAGISK & LSPOSED (ROOT)",
                 onClick = { onModeSelected(false, "leitz") }
@@ -222,22 +223,22 @@ fun ModeSelectionScreen(
             // Xiaomi 17 Ultra DCG Card
             ModeCard(
                 title = "14-BIT NATIVES DCG RAW",
-                subtitle = "Spezial-Setup für MotionCam Pro (Kein Root!)",
-                description = "Schalte echten 14-Bit Dual Conversion Gain RAW-Capture auf der Haupt- und Periskop-Kamera frei. Ausführliche Anleitung zur manuellen Einrichtung der Qualcomm Hardware-Register.",
+                subtitle = "Experimentelles MotionCam-Setup",
+                description = "Anleitung für ein experimentelles DCG-RAW-Setup. Ob 14-Bit-Streams und die benötigten Kamera-Pfade verfügbar sind, hängt von Sensor, Camera HAL und Firmware ab.",
                 tagColor = ZeissCyan,
                 tagText = "MOTIONCAM PRO & DCG",
                 onClick = { onModeSelected(true, "xiaomi_17_ultra_dcg") }
             )
         }
 
-        if (device.id == "vivo_x300_pro" || device.id == "xiaomi_14_ultra" || device.id == "xiaomi_15_ultra" || device.id == "samsung_s26_ultra") {
+        if (EgoistProfiles.supports(device.id)) {
             Spacer(modifier = Modifier.height(16.dp))
 
             // EGOIST Custom-Profil Card
             ModeCard(
                 title = "EGOIST CUSTOM-PROFIL",
-                subtitle = "Höchste Bildschärfe & Zeiss-Farben",
-                description = "Vollständig abgestimmtes Premium-Profil inkl. XML-Konfiguration und exklusiver Custom-Library (shgv1.2k16.so). Bietet extreme Detailzeichnung, ein integriertes Anleitungsvideo und erstklassiges Rauschverhalten.",
+                subtitle = "Gerätespezifisches Originalpaket",
+                description = "Vollständig abgestimmtes Premium-Profil inkl. AGC-Konfiguration und gerätespezifisch benannter Custom-Library. Enthält die mitgelieferte Kamera-APK, ein Anleitungsvideo und die zum Profil gehörenden Originaldateien.",
                 tagColor = ZeissCyan,
                 tagText = "AGC 8.4 & CUSTOM-LIB",
                 onClick = { onModeSelected(false, "egoist") }

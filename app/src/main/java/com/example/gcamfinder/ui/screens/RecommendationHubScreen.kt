@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.gcamfinder.data.Device
+import com.example.gcamfinder.data.EgoistProfiles
 import com.example.gcamfinder.data.GcamRecommendation
 import com.example.gcamfinder.data.GuideStep
 import com.example.gcamfinder.theme.*
@@ -63,6 +64,51 @@ import android.content.pm.ActivityInfo
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+
+private fun File.sha256(): String {
+    val digest = java.security.MessageDigest.getInstance("SHA-256")
+    inputStream().use { input ->
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var bytesRead = input.read(buffer)
+        while (bytesRead >= 0) {
+            if (bytesRead > 0) {
+                digest.update(buffer, 0, bytesRead)
+            }
+            bytesRead = input.read(buffer)
+        }
+    }
+    return digest.digest().joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+}
+
+private fun copyCacheFileToUri(
+    context: android.content.Context,
+    cacheFile: File,
+    destinationUri: Uri
+) {
+    check(cacheFile.isFile) { "Quelldatei wurde nicht gefunden: ${cacheFile.name}" }
+    val sourceSize = cacheFile.length()
+    val bytesCopied = context.contentResolver.openOutputStream(destinationUri, "wt")?.use { output ->
+        cacheFile.inputStream().use { input ->
+            input.copyTo(output)
+        }.also {
+            output.flush()
+        }
+    } ?: error("Zieldatei konnte nicht geöffnet werden.")
+    check(bytesCopied == sourceSize) {
+        "Unvollständiger Export: $bytesCopied von $sourceSize Bytes kopiert."
+    }
+}
+
+private fun egoistDownloadDirectory(
+    context: android.content.Context,
+    deviceId: String
+): File {
+    val directory = File(context.filesDir, "egoist/$deviceId")
+    check(directory.isDirectory || directory.mkdirs()) {
+        "EGOIST-Downloadordner konnte nicht erstellt werden."
+    }
+    return directory
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -116,26 +162,32 @@ fun RecommendationHubScreen(
 
     val isEgoist = activeVariant == "egoist"
     val isJ0qz = activeVariant == "j0qz"
-    val exoPlayer = if (isEgoist || isJ0qz) {
-        remember {
+    val egoistProfile = remember(device.id) { EgoistProfiles.forDevice(device.id) }
+    val egoistDownloadDir = remember(context.filesDir, device.id) {
+        egoistDownloadDirectory(context, device.id)
+    }
+    val leitzDownloadDir = remember(context.filesDir) {
+        File(context.filesDir, "leitz").also { directory ->
+            check(directory.isDirectory || directory.mkdirs()) {
+                "Leitz-Downloadordner konnte nicht erstellt werden."
+            }
+        }
+    }
+    val tutorialVideoFileId = when {
+        isEgoist -> egoistProfile?.tutorialGoogleDriveFileId?.takeIf { it.isNotBlank() }
+        isJ0qz -> "1BqJKewk4RKPlTWw667dk9GHn9mbsEeFg"
+        else -> null
+    }
+    val exoPlayer = remember(tutorialVideoFileId) {
+        tutorialVideoFileId?.let { videoFileId ->
             ExoPlayer.Builder(context).build().apply {
-                val videoId = if (isEgoist) {
-                    when (device.id) {
-                        "xiaomi_15_ultra" -> "1Ps5UeSzNfSjvq14P6oLlMyqU7ZQQa0J0"
-                        "xiaomi_14_ultra" -> "16TigGiJyM6K8Xk-r9TxObdriJQqRd_N2"
-                        "samsung_s26_ultra" -> "128suL9NhlSxuw-7bC9SUs2Xc0qpMcZTt"
-                        else -> "1LyparpXDBuzbmQUIuzc0t96kQKNjmd7v"
-                    }
-                } else {
-                    "1BqJKewk4RKPlTWw667dk9GHn9mbsEeFg"
-                }
-                val mediaItem = androidx.media3.common.MediaItem.fromUri("https://docs.google.com/uc?export=download&confirm=t&id=$videoId")
+                val mediaItem = androidx.media3.common.MediaItem.fromUri(
+                    "https://docs.google.com/uc?export=download&confirm=t&id=$videoFileId"
+                )
                 setMediaItem(mediaItem)
                 prepare()
             }
         }
-    } else {
-        null
     }
 
     if (exoPlayer != null) {
@@ -161,13 +213,40 @@ fun RecommendationHubScreen(
 
     // --- EGOIST STATES ---
     var egoistApkProgress by remember { mutableFloatStateOf(0f) }
-    var egoistApkStatus by remember { mutableStateOf("IDLE") } // "IDLE", "DOWNLOADING", "SUCCESS", "FAILED"
+    var egoistApkStatus by remember(egoistDownloadDir, egoistProfile?.apk?.fileName) {
+        mutableStateOf("IDLE")
+    }
 
     var egoistXmlProgress by remember { mutableFloatStateOf(0f) }
-    var egoistXmlStatus by remember { mutableStateOf("IDLE") } // "IDLE", "DOWNLOADING", "SUCCESS", "FAILED"
+    var egoistXmlStatus by remember(egoistDownloadDir, egoistProfile?.config?.fileName) {
+        mutableStateOf("IDLE")
+    }
 
     var egoistLibProgress by remember { mutableFloatStateOf(0f) }
-    var egoistLibStatus by remember { mutableStateOf("IDLE") } // "IDLE", "DOWNLOADING", "SUCCESS", "FAILED"
+    var egoistLibStatus by remember(egoistDownloadDir, egoistProfile?.library?.fileName) {
+        mutableStateOf("IDLE")
+    }
+
+    LaunchedEffect(egoistDownloadDir, egoistProfile) {
+        val profile = egoistProfile ?: return@LaunchedEffect
+        val verifiedStatuses = withContext(Dispatchers.IO) {
+            listOf(profile.apk, profile.config, profile.library).map { download ->
+                val file = File(egoistDownloadDir, download.fileName)
+                file.isFile && download.sha256?.let { expectedSha256 ->
+                    file.sha256() == expectedSha256
+                } == true
+            }
+        }
+        if (egoistApkStatus == "IDLE" && verifiedStatuses[0]) {
+            egoistApkStatus = "SUCCESS"
+        }
+        if (egoistXmlStatus == "IDLE" && verifiedStatuses[1]) {
+            egoistXmlStatus = "SUCCESS"
+        }
+        if (egoistLibStatus == "IDLE" && verifiedStatuses[2]) {
+            egoistLibStatus = "SUCCESS"
+        }
+    }
 
     val saveEgoistXmlLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/octet-stream")
@@ -176,20 +255,9 @@ fun RecommendationHubScreen(
             coroutineScope.launch {
                 try {
                     withContext(Dispatchers.IO) {
-                        val filename = when (device.id) {
-                            "xiaomi_15_ultra" -> "EGOIST_1.2k16_15u_12mp.agc"
-                            "xiaomi_14_ultra" -> "EGOIST_1.2k16_14u_12mp.agc"
-                            "samsung_s26_ultra" -> "EGOISTv44betaAGC8.4v9.6_S26U_test.agc"
-                            else -> "EGOIST_1.2k16_X300P.agc"
-                        }
-                        val cacheFile = java.io.File(context.cacheDir, filename)
-                        if (cacheFile.exists()) {
-                            context.contentResolver.openOutputStream(uri)?.use { outputStream ->
-                                cacheFile.inputStream().use { inputStream ->
-                                    inputStream.copyTo(outputStream)
-                                }
-                            }
-                        }
+                        val filename = checkNotNull(egoistProfile).config.fileName
+                        val downloadedFile = File(egoistDownloadDir, filename)
+                        copyCacheFileToUri(context, downloadedFile, uri)
                     }
                     android.widget.Toast.makeText(context, "XML-Konfiguration erfolgreich gespeichert!", android.widget.Toast.LENGTH_SHORT).show()
                 } catch (e: Exception) {
@@ -207,14 +275,9 @@ fun RecommendationHubScreen(
             coroutineScope.launch {
                 try {
                     withContext(Dispatchers.IO) {
-                        val cacheFile = java.io.File(context.cacheDir, "shgv1.2k16.so")
-                        if (cacheFile.exists()) {
-                            context.contentResolver.openOutputStream(uri)?.use { outputStream ->
-                                cacheFile.inputStream().use { inputStream ->
-                                    inputStream.copyTo(outputStream)
-                                }
-                            }
-                        }
+                        val fileName = checkNotNull(egoistProfile).library.fileName
+                        val downloadedFile = File(egoistDownloadDir, fileName)
+                        copyCacheFileToUri(context, downloadedFile, uri)
                     }
                     android.widget.Toast.makeText(context, "Custom-Library erfolgreich gespeichert!", android.widget.Toast.LENGTH_SHORT).show()
                 } catch (e: Exception) {
@@ -229,10 +292,22 @@ fun RecommendationHubScreen(
         url: String,
         fileName: String,
         context: android.content.Context,
+        destinationDirectory: File = context.cacheDir,
+        expectedSha256: String? = null,
         onProgress: (Float) -> Unit
     ): Boolean {
+        var partialFile: File? = null
         return try {
-            val cacheFile = java.io.File(context.cacheDir, fileName)
+            check(destinationDirectory.isDirectory || destinationDirectory.mkdirs()) {
+                "Downloadordner konnte nicht erstellt werden."
+            }
+            val cacheFile = File(destinationDirectory, fileName)
+            val workingFile = File(destinationDirectory, "$fileName.part").apply {
+                if (exists()) {
+                    check(delete()) { "Alter Teildownload konnte nicht gelöscht werden." }
+                }
+            }
+            partialFile = workingFile
             var redirectUrl = url
             var connection: java.net.HttpURLConnection? = null
             var status: Int
@@ -335,7 +410,7 @@ fun RecommendationHubScreen(
             if (status == java.net.HttpURLConnection.HTTP_OK && connection != null) {
                 val length = connection.contentLength
                 val input = connection.inputStream
-                val output = java.io.FileOutputStream(cacheFile)
+                val output = java.io.FileOutputStream(workingFile)
                 val buffer = ByteArray(4096)
                 var total = 0L
                 var read: Int
@@ -352,19 +427,57 @@ fun RecommendationHubScreen(
                 output.flush()
                 output.close()
                 input.close()
-                true
+                connection.disconnect()
+                val downloadedSha256 = expectedSha256?.let { workingFile.sha256() }
+                if (expectedSha256 != null && downloadedSha256 != expectedSha256) {
+                    android.util.Log.e(
+                        "GCamFinder",
+                        "SHA-256 mismatch for $fileName: expected=$expectedSha256 actual=$downloadedSha256"
+                    )
+                    workingFile.delete()
+                    false
+                } else {
+                    check(!cacheFile.exists() || cacheFile.delete()) {
+                        "Vorherige Datei konnte nicht ersetzt werden."
+                    }
+                    if (!workingFile.renameTo(cacheFile)) {
+                        workingFile.inputStream().use { source ->
+                            cacheFile.outputStream().use { destination ->
+                                source.copyTo(destination)
+                                destination.flush()
+                            }
+                        }
+                        check(cacheFile.length() == workingFile.length()) {
+                            "Finalisierung des Downloads war unvollständig."
+                        }
+                        check(workingFile.delete()) {
+                            "Teildownload konnte nach dem Kopieren nicht entfernt werden."
+                        }
+                    }
+                    if (expectedSha256 != null) {
+                        check(cacheFile.sha256() == expectedSha256) {
+                            "SHA-256-Prüfung nach dem Verschieben fehlgeschlagen."
+                        }
+                    }
+                    true
+                }
             } else {
                 false
             }
         } catch (e: Exception) {
             e.printStackTrace()
+            partialFile?.delete()
             false
         }
     }
 
-    fun triggerApkInstallationByName(ctx: android.content.Context, fileName: String) {
+    fun triggerApkInstallationByName(
+        ctx: android.content.Context,
+        fileName: String,
+        directory: File = ctx.cacheDir
+    ) {
         try {
-            val cacheFile = File(ctx.cacheDir, fileName)
+            val cacheFile = File(directory, fileName)
             if (!cacheFile.exists()) {
                 android.widget.Toast.makeText(ctx, "APK-Datei nicht gefunden.", android.widget.Toast.LENGTH_SHORT).show()
                 return
@@ -403,6 +516,16 @@ fun RecommendationHubScreen(
     }
 
     fun startEgoistDownloads() {
+        val profile = egoistProfile
+        if (profile == null || !profile.isConfigured) {
+            android.widget.Toast.makeText(
+                context,
+                "Die Cloud-Dateien für dieses Gerät sind noch nicht vollständig konfiguriert.",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+
         egoistApkStatus = "DOWNLOADING"
         egoistXmlStatus = "DOWNLOADING"
         egoistLibStatus = "DOWNLOADING"
@@ -410,54 +533,26 @@ fun RecommendationHubScreen(
         egoistXmlProgress = 0f
         egoistLibProgress = 0f
 
-        val apkId = when (device.id) {
-            "xiaomi_15_ultra" -> "1UvDMDIDN4g1W43ulj7eO6e6JsYaZGbNk"
-            "xiaomi_14_ultra" -> "1mhurWnjvNfU2B72k0y81aPWUunrIebTQ"
-            "samsung_s26_ultra" -> "1FDu0HyNUE6CLsSk_PcvYrbFSTE8KzQvi"
-            else -> "1ClY5tXi03fRoDRBZigmR3aL-JsMqsqIi"
-        }
-        val apkName = when (device.id) {
-            "xiaomi_15_ultra" -> "AGC8.4.300_V9.6_ruler15u.apk"
-            "xiaomi_14_ultra" -> "AGC8.4.300_V9.6_rulerX14U.apk"
-            "samsung_s26_ultra" -> "AGC8.4.300_V9.6_ruler.apk"
-            else -> "AGC8.4.300_V9.6_scan3d.apk"
-        }
-
-        val xmlId = when (device.id) {
-            "xiaomi_15_ultra" -> "1L-mCdB9tzOuv6EbJ68DcYl7oCYtXoirq"
-            "xiaomi_14_ultra" -> "1fckhgTQ4oPARif3DjQaNCzstTwBolQDT"
-            "samsung_s26_ultra" -> "1FxkfREsSPYV69k718FhAPn5jpS6s2vgY"
-            else -> "1l6CDrl66ZF9khCYd9VSHXXgYzFWWAp6u"
-        }
-        val xmlName = when (device.id) {
-            "xiaomi_15_ultra" -> "EGOIST_1.2k16_15u_12mp.agc"
-            "xiaomi_14_ultra" -> "EGOIST_1.2k16_14u_12mp.agc"
-            "samsung_s26_ultra" -> "EGOISTv44betaAGC8.4v9.6_S26U_test.agc"
-            else -> "EGOIST_1.2k16_X300P.agc"
-        }
-
-        val libId = when (device.id) {
-            "xiaomi_15_ultra" -> "1nsGHwBzXGadCA_5sC9eVp0hfZXwirKk8"
-            "xiaomi_14_ultra" -> "1zSlMC_O0o4p9f7JV0t98en2OEN5cNtw9"
-            "samsung_s26_ultra" -> "10R4poIIk3f14DUzNfrZreFnNdMS7sAxD"
-            else -> "1nWk1EhhPTx42tubeTafVXgrH03OSWKVv"
-        }
-        val libName = "shgv1.2k16.so"
-
         coroutineScope.launch {
             // 1. Download APK
             launch(Dispatchers.IO) {
                 val success = downloadFileToCache(
-                    url = "https://docs.google.com/uc?export=download&confirm=t&id=$apkId",
-                    fileName = apkName,
-                    context = context
+                    url = profile.apk.directDownloadUrl,
+                    fileName = profile.apk.fileName,
+                    context = context,
+                    destinationDirectory = egoistDownloadDir,
+                    expectedSha256 = profile.apk.sha256
                 ) { progress ->
                     egoistApkProgress = progress
                 }
                 if (success) {
                     egoistApkStatus = "SUCCESS"
                     withContext(Dispatchers.Main) {
-                        triggerApkInstallationByName(context, apkName)
+                        triggerApkInstallationByName(
+                            context,
+                            profile.apk.fileName,
+                            egoistDownloadDir
+                        )
                     }
                 } else {
                     egoistApkStatus = "FAILED"
@@ -467,9 +562,11 @@ fun RecommendationHubScreen(
             // 2. Download XML
             launch(Dispatchers.IO) {
                 val success = downloadFileToCache(
-                    url = "https://docs.google.com/uc?export=download&confirm=t&id=$xmlId",
-                    fileName = xmlName,
-                    context = context
+                    url = profile.config.directDownloadUrl,
+                    fileName = profile.config.fileName,
+                    context = context,
+                    destinationDirectory = egoistDownloadDir,
+                    expectedSha256 = profile.config.sha256
                 ) { progress ->
                     egoistXmlProgress = progress
                 }
@@ -479,9 +576,11 @@ fun RecommendationHubScreen(
             // 3. Download LIB
             launch(Dispatchers.IO) {
                 val success = downloadFileToCache(
-                    url = "https://docs.google.com/uc?export=download&confirm=t&id=$libId",
-                    fileName = libName,
-                    context = context
+                    url = profile.library.directDownloadUrl,
+                    fileName = profile.library.fileName,
+                    context = context,
+                    destinationDirectory = egoistDownloadDir,
+                    expectedSha256 = profile.library.sha256
                 ) { progress ->
                     egoistLibProgress = progress
                 }
@@ -521,6 +620,27 @@ fun RecommendationHubScreen(
     var leitzHookStatus by remember { mutableStateOf("IDLE") } // "IDLE", "EXTRACTED", "INSTALLED", "FAILED"
     var leitzFixStatus by remember { mutableStateOf("IDLE") } // "IDLE", "EXTRACTED", "INSTALLED", "FAILED"
 
+    LaunchedEffect(leitzDownloadDir) {
+        val packageIsReady = withContext(Dispatchers.IO) {
+            val archive = File(leitzDownloadDir, "Leitz_Set_xiaomi.eu_v8.zip")
+            archive.isFile &&
+                archive.sha256() == "c09c2205e1ec354e053e590e8dd46142dbe1b931dfb36d54043d4f586c59cd64" &&
+                listOf(
+                    "1_CN_Gallery_Magisk_v8_CN43_CacheRebind.zip",
+                    "2_Leica_Camera_Hook_v11_EU.apk",
+                    "3_Gallery_Fix_v1.apk",
+                    "README.txt"
+                ).all { fileName -> File(leitzDownloadDir, fileName).isFile }
+        }
+        if (packageIsReady && leitzZipStatus == "IDLE") {
+            leitzZipStatus = "SUCCESS"
+            leitzZipProgress = 1f
+            leitzMagiskStatus = "EXTRACTED"
+            leitzHookStatus = "EXTRACTED"
+            leitzFixStatus = "EXTRACTED"
+        }
+    }
+
     val saveLeitzMagiskLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/zip")
     ) { uri ->
@@ -528,14 +648,11 @@ fun RecommendationHubScreen(
             coroutineScope.launch {
                 try {
                     withContext(Dispatchers.IO) {
-                        val cacheFile = java.io.File(context.cacheDir, "1_CN_Gallery_Magisk_v8_CN43_CacheRebind.zip")
-                        if (cacheFile.exists()) {
-                            context.contentResolver.openOutputStream(uri)?.use { outputStream ->
-                                cacheFile.inputStream().use { inputStream ->
-                                    inputStream.copyTo(outputStream)
-                                }
-                            }
-                        }
+                        val sourceFile = File(
+                            leitzDownloadDir,
+                            "1_CN_Gallery_Magisk_v8_CN43_CacheRebind.zip"
+                        )
+                        copyCacheFileToUri(context, sourceFile, uri)
                     }
                     android.widget.Toast.makeText(context, "Magisk-Modul erfolgreich gespeichert!", android.widget.Toast.LENGTH_SHORT).show()
                 } catch (e: Exception) {
@@ -601,11 +718,12 @@ fun RecommendationHubScreen(
         ctx: android.content.Context,
         cacheFileName: String,
         targetDirName: String,
-        targetFileName: String
+        targetFileName: String,
+        sourceDirectory: File = ctx.cacheDir
     ): Boolean {
         return try {
-            val cacheFile = File(ctx.cacheDir, cacheFileName)
-            if (!cacheFile.exists()) return false
+            val sourceFile = File(sourceDirectory, cacheFileName)
+            if (!sourceFile.isFile) return false
             
             val externalRoot = android.os.Environment.getExternalStorageDirectory()
             val targetDir = File(externalRoot, targetDirName)
@@ -614,12 +732,14 @@ fun RecommendationHubScreen(
             }
             
             val targetFile = File(targetDir, targetFileName)
-            cacheFile.inputStream().use { input ->
+            sourceFile.inputStream().use { input ->
                 targetFile.outputStream().use { output ->
                     input.copyTo(output)
+                    output.flush()
                 }
             }
-            true
+            targetFile.length() == sourceFile.length() &&
+                targetFile.sha256() == sourceFile.sha256()
         } catch (e: Exception) {
             e.printStackTrace()
             false
@@ -627,20 +747,33 @@ fun RecommendationHubScreen(
     }
 
 
-    fun extractLeitzZip(ctx: android.content.Context, zipFile: File): Boolean {
+    fun extractLeitzZip(destinationDirectory: File, zipFile: File): Boolean {
         return try {
-            val zip = java.util.zip.ZipFile(zipFile)
-            val entries = zip.entries()
-            while (entries.hasMoreElements()) {
-                val entry = entries.nextElement()
-                val entryFile = File(ctx.cacheDir, entry.name)
-                if (entry.isDirectory) {
-                    entryFile.mkdirs()
-                } else {
-                    entryFile.parentFile?.mkdirs()
-                    zip.getInputStream(entry).use { input ->
-                        entryFile.outputStream().use { output ->
-                            input.copyTo(output)
+            check(destinationDirectory.isDirectory || destinationDirectory.mkdirs()) {
+                "Leitz-Zielordner konnte nicht erstellt werden."
+            }
+            val extractionRoot = destinationDirectory.canonicalFile
+            val extractionPrefix = extractionRoot.path + File.separator
+            java.util.zip.ZipFile(zipFile).use { zip ->
+                val entries = zip.entries()
+                while (entries.hasMoreElements()) {
+                    val entry = entries.nextElement()
+                    val entryFile = File(extractionRoot, entry.name).canonicalFile
+                    check(entryFile.path.startsWith(extractionPrefix)) {
+                        "Unsicherer ZIP-Eintrag: ${entry.name}"
+                    }
+                    if (entry.isDirectory) {
+                        check(entryFile.isDirectory || entryFile.mkdirs()) {
+                            "Ordner konnte nicht angelegt werden: ${entry.name}"
+                        }
+                    } else {
+                        check(entryFile.parentFile?.let { it.isDirectory || it.mkdirs() } == true) {
+                            "Zielordner konnte nicht angelegt werden: ${entry.name}"
+                        }
+                        zip.getInputStream(entry).use { input ->
+                            entryFile.outputStream().use { output ->
+                                input.copyTo(output)
+                            }
                         }
                     }
                 }
@@ -660,19 +793,23 @@ fun RecommendationHubScreen(
         leitzFixStatus = "IDLE"
 
         coroutineScope.launch {
-            val success = downloadFileToCache(
-                url = "https://docs.google.com/uc?export=download&confirm=t&id=1kNpXwss9v6tGVD1U4bvwWQ42631ClrC5",
-                fileName = "Leitz_Set_xiaomi.eu_v8.zip",
-                context = context
-            ) { progress ->
-                leitzZipProgress = progress
+            val success = withContext(Dispatchers.IO) {
+                downloadFileToCache(
+                    url = "https://drive.usercontent.google.com/download?id=1kNpXwss9v6tGVD1U4bvwWQ42631ClrC5&export=download&confirm=t",
+                    fileName = "Leitz_Set_xiaomi.eu_v8.zip",
+                    context = context,
+                    destinationDirectory = leitzDownloadDir,
+                    expectedSha256 = "c09c2205e1ec354e053e590e8dd46142dbe1b931dfb36d54043d4f586c59cd64"
+                ) { progress ->
+                    leitzZipProgress = progress
+                }
             }
 
             if (success) {
                 leitzZipStatus = "EXTRACTING"
-                val zipFile = File(context.cacheDir, "Leitz_Set_xiaomi.eu_v8.zip")
+                val zipFile = File(leitzDownloadDir, "Leitz_Set_xiaomi.eu_v8.zip")
                 val extractSuccess = withContext(Dispatchers.IO) {
-                    extractLeitzZip(context, zipFile)
+                    extractLeitzZip(leitzDownloadDir, zipFile)
                 }
                 if (extractSuccess) {
                     leitzZipStatus = "SUCCESS"
@@ -687,7 +824,8 @@ fun RecommendationHubScreen(
                                 ctx = context,
                                 cacheFileName = "1_CN_Gallery_Magisk_v8_CN43_CacheRebind.zip",
                                 targetDirName = "Download",
-                                targetFileName = "1_CN_Gallery_Magisk_v8_CN43_CacheRebind.zip"
+                                targetFileName = "1_CN_Gallery_Magisk_v8_CN43_CacheRebind.zip",
+                                sourceDirectory = leitzDownloadDir
                             )
                         }
                         if (copied) {
@@ -695,10 +833,11 @@ fun RecommendationHubScreen(
                         }
                     }
 
-                    // Trigger automatic installations of the two APKs
-                    withContext(Dispatchers.Main) {
-                        triggerApkInstallationByName(context, "2_Leica_Camera_Hook_v11_EU.apk")
-                    }
+                    android.widget.Toast.makeText(
+                        context,
+                        "Leitz-Paket SHA-geprüft und entpackt. APKs nur über die einzelnen Buttons installieren.",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
                 } else {
                     leitzZipStatus = "FAILED"
                 }
@@ -743,7 +882,8 @@ fun RecommendationHubScreen(
                 val success = downloadFileToCache(
                     url = "https://docs.google.com/uc?export=download&confirm=t&id=1t60UoNRKZHZXvBhxMfpdg2ebpmUiMQAy",
                     fileName = "J0qZ84x-17U.xml",
-                    context = context
+                    context = context,
+                    expectedSha256 = "97034d90d94030346980fc36fa581a9431afd6d6f047a3a0b357adc08e52c1df"
                 ) { progress ->
                     j0qz84XmlProgress = progress
                 }
@@ -805,7 +945,8 @@ fun RecommendationHubScreen(
                 val success = downloadFileToCache(
                     url = "https://docs.google.com/uc?export=download&confirm=t&id=1TIeEBkt1dNdM6E2N22dOHgE9q5YNMepW",
                     fileName = "J0qZ83x-17U.xml",
-                    context = context
+                    context = context,
+                    expectedSha256 = "238930a445a706ca499c067d50e194ec99ae64605fdc196592460c9077cecb20"
                 ) { progress ->
                     j0qz83XmlProgress = progress
                 }
@@ -883,7 +1024,8 @@ fun RecommendationHubScreen(
             val success = downloadFileToCache(
                 url = "https://docs.google.com/uc?export=download&confirm=t&id=1t60UoNRKZHZXvBhxMfpdg2ebpmUiMQAy",
                 fileName = "J0qZ84x-17U.xml",
-                context = context
+                context = context,
+                expectedSha256 = "97034d90d94030346980fc36fa581a9431afd6d6f047a3a0b357adc08e52c1df"
             ) { progress ->
                 j0qz84XmlProgress = progress
             }
@@ -939,7 +1081,8 @@ fun RecommendationHubScreen(
             val success = downloadFileToCache(
                 url = "https://docs.google.com/uc?export=download&confirm=t&id=1TIeEBkt1dNdM6E2N22dOHgE9q5YNMepW",
                 fileName = "J0qZ83x-17U.xml",
-                context = context
+                context = context,
+                expectedSha256 = "238930a445a706ca499c067d50e194ec99ae64605fdc196592460c9077cecb20"
             ) { progress ->
                 j0qz83XmlProgress = progress
             }
@@ -996,7 +1139,8 @@ fun RecommendationHubScreen(
                 val success = downloadFileToCache(
                     url = "https://docs.google.com/uc?export=download&confirm=t&id=1udhLjTp2UUj55zqdkiXEwC9Z1oLG9wBj",
                     fileName = "RIFANDA-17U.xml",
-                    context = context
+                    context = context,
+                    expectedSha256 = "d5fe485b3ad12f17ae22ade08b8cff0f279aeb3f3112c4a0e7a4dd2bd110cc9f"
                 ) { progress ->
                     rifandaXmlProgress = progress
                 }
@@ -1048,7 +1192,8 @@ fun RecommendationHubScreen(
             val success = downloadFileToCache(
                 url = "https://docs.google.com/uc?export=download&confirm=t&id=1udhLjTp2UUj55zqdkiXEwC9Z1oLG9wBj",
                 fileName = "RIFANDA-17U.xml",
-                context = context
+                context = context,
+                expectedSha256 = "d5fe485b3ad12f17ae22ade08b8cff0f279aeb3f3112c4a0e7a4dd2bd110cc9f"
             ) { progress ->
                 rifandaXmlProgress = progress
             }
@@ -1077,22 +1222,21 @@ fun RecommendationHubScreen(
     var apkDownloadProgress by remember { mutableFloatStateOf(0f) }
     var apkDownloadStatus by remember { mutableStateOf("IDLE") } // "IDLE", "DOWNLOADING", "SUCCESS", "FAILED"
 
-    var xmlDataToSave by remember { mutableStateOf<ByteArray?>(null) }
+    var xmlFileToSave by remember { mutableStateOf<File?>(null) }
+    var apkFileToSave by remember { mutableStateOf<File?>(null) }
 
     // SAF Document Launchers
     val saveXmlLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("text/xml")
+        contract = ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { uri ->
-        if (uri != null && xmlDataToSave != null) {
+        val sourceFile = xmlFileToSave
+        if (uri != null && sourceFile != null) {
             coroutineScope.launch {
                 try {
                     withContext(Dispatchers.IO) {
-                        context.contentResolver.openOutputStream(uri)?.use { outputStream ->
-                            outputStream.write(xmlDataToSave)
-                            outputStream.flush()
-                        }
+                        copyCacheFileToUri(context, sourceFile, uri)
                     }
-                    android.widget.Toast.makeText(context, "XML-Konfiguration erfolgreich gespeichert!", android.widget.Toast.LENGTH_LONG).show()
+                    android.widget.Toast.makeText(context, "Konfiguration unverändert und SHA-geprüft gespeichert!", android.widget.Toast.LENGTH_LONG).show()
                     xmlDownloadStatus = "SUCCESS"
                 } catch (e: Exception) {
                     e.printStackTrace()
@@ -1108,22 +1252,14 @@ fun RecommendationHubScreen(
     val saveApkLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/vnd.android.package-archive")
     ) { uri ->
-        if (uri != null) {
+        val sourceFile = apkFileToSave
+        if (uri != null && sourceFile != null) {
             coroutineScope.launch {
                 try {
                     withContext(Dispatchers.IO) {
-                        context.contentResolver.openOutputStream(uri)?.use { outputStream ->
-                            // Generate a stub GCam APK or write text
-                            val dummyApkBytes = ("GCam Finder Port Installation Package\n" +
-                                    "Gerät: ${device.name}\n" +
-                                    "Entwickler: ${recommendation?.gcamDeveloper ?: "BigKaka"}\n" +
-                                    "Version: ${recommendation?.gcamVersion ?: "9.2"}\n" +
-                                    "Branding: BY scheisssewasser").toByteArray(Charsets.UTF_8)
-                            outputStream.write(dummyApkBytes)
-                            outputStream.flush()
-                        }
+                        copyCacheFileToUri(context, sourceFile, uri)
                     }
-                    android.widget.Toast.makeText(context, "GCam APK erfolgreich in Downloads gespeichert!", android.widget.Toast.LENGTH_LONG).show()
+                    android.widget.Toast.makeText(context, "Mitgelieferte APK unverändert und SHA-geprüft gespeichert!", android.widget.Toast.LENGTH_LONG).show()
                     apkDownloadStatus = "SUCCESS"
                 } catch (e: Exception) {
                     e.printStackTrace()
@@ -1136,81 +1272,72 @@ fun RecommendationHubScreen(
         }
     }
 
-    fun startXmlDownload(url: String, fileName: String) {
+    fun startXmlDownload(
+        url: String,
+        fileName: String,
+        expectedSha256: String?
+    ) {
         xmlDownloadStatus = "DOWNLOADING"
         xmlDownloadProgress = 0f
         coroutineScope.launch {
-            val data = withContext(Dispatchers.IO) {
-                try {
-                    val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-                    connection.connectTimeout = 3000
-                    connection.readTimeout = 3000
-                    connection.connect()
-                    if (connection.responseCode == java.net.HttpURLConnection.HTTP_OK) {
-                        val length = connection.contentLength
-                        val input = connection.inputStream
-                        val output = java.io.ByteArrayOutputStream()
-                        val buffer = ByteArray(2048)
-                        var total = 0L
-                        var read: Int
-                        while (input.read(buffer).also { read = it } != -1) {
-                            total += read
-                            if (length > 0) {
-                                withContext(Dispatchers.Main) {
-                                    xmlDownloadProgress = total.toFloat() / length
-                                }
-                            }
-                            output.write(buffer, 0, read)
-                        }
-                        output.toByteArray()
-                    } else {
-                        null
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    null
+            val success = withContext(Dispatchers.IO) {
+                downloadFileToCache(
+                    url = url,
+                    fileName = fileName,
+                    context = context,
+                    destinationDirectory = egoistDownloadDir,
+                    expectedSha256 = expectedSha256
+                ) { progress ->
+                    xmlDownloadProgress = progress
                 }
             }
 
-            val finalData = data ?: run {
-                // Highly customized premium XML fallback content
-                val modelName = device.name
-                val sensorListStr = device.sensors.joinToString("\n        ") { "<!-- ${it.role}: ${it.sensorModel} (${it.resolution}) -->" }
-                val customXml = """
-                    <?xml version='1.0' encoding='utf-8' standalone='yes' ?>
-                    <!-- GCam Custom Configuration Profile -->
-                    <!-- Kalibriert von scheisssewasser für $modelName -->
-                    <map>
-                        <string name="device_model">$modelName</string>
-                        <string name="author">scheisssewasser</string>
-                        <string name="xml_version">${recommendation?.xmlName ?: "Custom_v1.xml"}</string>
-                        <int name="hdr_plus_enhanced_frames" value="15" />
-                        <int name="leica_color_mode" value="1" />
-                        <int name="zeiss_t_coating" value="1" />
-                        <!-- Hardware Sensor Spezifikationen -->
-                        $sensorListStr
-                        <string name="custom_noise_model">Sony_LYT900_Ultra_NoiseModel_v4</string>
-                    </map>
-                """.trimIndent()
-                customXml.toByteArray(Charsets.UTF_8)
+            if (success) {
+                xmlFileToSave = File(egoistDownloadDir, fileName)
+                xmlDownloadStatus = "SAVING"
+                saveXmlLauncher.launch(fileName)
+            } else {
+                xmlDownloadStatus = "FAILED"
+                android.widget.Toast.makeText(
+                    context,
+                    "Download oder SHA-256-Prüfung der Konfiguration fehlgeschlagen.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
             }
-
-            xmlDataToSave = finalData
-            saveXmlLauncher.launch(fileName)
         }
     }
 
-    fun startApkDownload(url: String, fileName: String) {
+    fun startApkDownload(
+        url: String,
+        fileName: String,
+        expectedSha256: String?
+    ) {
         apkDownloadStatus = "DOWNLOADING"
         apkDownloadProgress = 0f
         coroutineScope.launch {
-            // High fidelity simulated progress
-            for (progress in 1..100) {
-                kotlinx.coroutines.delay(20)
-                apkDownloadProgress = progress / 100f
+            val success = withContext(Dispatchers.IO) {
+                downloadFileToCache(
+                    url = url,
+                    fileName = fileName,
+                    context = context,
+                    destinationDirectory = egoistDownloadDir,
+                    expectedSha256 = expectedSha256
+                ) { progress ->
+                    apkDownloadProgress = progress
+                }
             }
-            apkDownloadStatus = "SAVING"
-            saveApkLauncher.launch(fileName)
+            if (success) {
+                apkFileToSave = File(egoistDownloadDir, fileName)
+                apkDownloadStatus = "SAVING"
+                saveApkLauncher.launch(fileName)
+            } else {
+                apkDownloadStatus = "FAILED"
+                android.widget.Toast.makeText(
+                    context,
+                    "Download oder SHA-256-Prüfung der mitgelieferten APK fehlgeschlagen.",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
         }
     }
 
@@ -2670,12 +2797,12 @@ fun RecommendationHubScreen(
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(
-                                text = "LEICA M9 CLOUD PROCESSING (UNLOCKED)",
+                                text = "LEICA M9 CLOUD PROCESSING · SHA-GEPRÜFT",
                                 style = Typography.labelMedium.copy(color = LeicaRed, fontWeight = FontWeight.Bold)
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = "Schalte das originale Leica M9 Essential Cloud-Processing (50-Megapixel-Resultate) auf deinem Xiaomi 17 Ultra (normales Modell mit xiaomi.eu ROM) frei. Dieser Mod lädt das dreiteilige Installationspaket herunter und entpackt es vollautomatisch im Hintergrund.",
+                                text = "Lädt das mitgelieferte dreiteilige Paket für Leica-M9-Cloud-Processing auf dem Xiaomi 17 Ultra mit xiaomi.eu ROM, prüft das Archiv per SHA-256 und entpackt es anschließend. Magisk und LSPosed sind erforderlich.",
                                 style = Typography.bodyMedium.copy(color = TextSecondary, fontSize = 12.sp, lineHeight = 16.sp)
                             )
                             Spacer(modifier = Modifier.height(16.dp))
@@ -2752,7 +2879,8 @@ fun RecommendationHubScreen(
                                             ctx = context,
                                             cacheFileName = "1_CN_Gallery_Magisk_v8_CN43_CacheRebind.zip",
                                             targetDirName = "Download",
-                                            targetFileName = "1_CN_Gallery_Magisk_v8_CN43_CacheRebind.zip"
+                                            targetFileName = "1_CN_Gallery_Magisk_v8_CN43_CacheRebind.zip",
+                                            sourceDirectory = leitzDownloadDir
                                         )
                                         if (copied) {
                                             leitzMagiskStatus = "COPIED"
@@ -2819,7 +2947,11 @@ fun RecommendationHubScreen(
                             Spacer(modifier = Modifier.height(12.dp))
                             Button(
                                 onClick = {
-                                    triggerApkInstallationByName(context, "2_Leica_Camera_Hook_v11_EU.apk")
+                                    triggerApkInstallationByName(
+                                        context,
+                                        "2_Leica_Camera_Hook_v11_EU.apk",
+                                        leitzDownloadDir
+                                    )
                                 },
                                 enabled = isEnabled,
                                 colors = ButtonDefaults.buttonColors(
@@ -2860,7 +2992,7 @@ fun RecommendationHubScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "3. Leica Gallery Fix (v1.0) APK",
+                                    text = "3. Gallery Fix (v1) APK",
                                     style = Typography.bodyLarge.copy(fontWeight = FontWeight.Bold, color = TextPrimary)
                                 )
                                 Text(
@@ -2870,13 +3002,17 @@ fun RecommendationHubScreen(
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Dateiname: 3_Leica_Gallery_Fix_v1.0.apk\nDas LSPosed-Modul, welches die Anzeige der Leica M9 Filter und Cloud-Galerie repariert.",
+                                text = "Dateiname: 3_Gallery_Fix_v1.apk\nDas LSPosed-Modul, welches die Anzeige der Leica M9 Filter und Cloud-Galerie repariert.",
                                 style = Typography.bodyMedium.copy(color = TextSecondary, fontSize = 11.sp, lineHeight = 15.sp)
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             Button(
                                 onClick = {
-                                    triggerApkInstallationByName(context, "3_Leica_Gallery_Fix_v1.0.apk")
+                                    triggerApkInstallationByName(
+                                        context,
+                                        "3_Gallery_Fix_v1.apk",
+                                        leitzDownloadDir
+                                    )
                                 },
                                 enabled = isEnabled,
                                 colors = ButtonDefaults.buttonColors(
@@ -2989,7 +3125,7 @@ fun RecommendationHubScreen(
                             }
                             Spacer(modifier = Modifier.height(10.dp))
                             Text(
-                                text = "• xiaomi.eu ROM erforderlich: Dieser Mod funktioniert ausschließlich auf Custom-ROMs basierend auf der China-Stable/Weekly ROM (z.B. xiaomi.eu). Auf globalen Standard-ROMs schlägt die Verarbeitung fehl.\n\n• Galerie-Cache löschen: Falls Bilder nach der Aufnahme nicht verarbeitet werden oder Fehler anzeigen, lösche alle Daten der Galerie-App (com.miui.gallery) und der Kamera-App (com.android.camera) in den Android-Systemeinstellungen und starte LSPosed neu.\n\n• LSPosed-Zuweisung: Achte penibel darauf, dass der Hook nur für die Kamera-App und der Fix nur für die Galerie-App aktiv ist. Falsche Zuweisungen können zum Absturz der Apps führen.",
+                                text = "• xiaomi.eu ROM erforderlich: Dieser Mod funktioniert ausschließlich auf Custom-ROMs basierend auf der China-Stable/Weekly ROM (z.B. xiaomi.eu). Auf globalen Standard-ROMs schlägt die Verarbeitung fehl.\n\n• APK-Signatur prüfen: Die beiden mitgelieferten LSPosed-APKs verwenden eine Projekt-/Debug-Signatur. Installiere sie deshalb bewusst einzeln und nur, wenn du genau diesem Paket vertraust.\n\n• Galerie-Cache löschen: Falls Bilder nach der Aufnahme nicht verarbeitet werden oder Fehler anzeigen, lösche alle Daten der Galerie-App (com.miui.gallery) und der Kamera-App (com.android.camera) in den Android-Systemeinstellungen und starte LSPosed neu.\n\n• LSPosed-Zuweisung: Achte penibel darauf, dass der Hook nur für die Kamera-App und der Fix nur für die Galerie-App aktiv ist. Falsche Zuweisungen können zum Absturz der Apps führen.",
                                 style = Typography.bodyMedium.copy(color = TextSecondary, fontSize = 11.sp, lineHeight = 16.sp)
                             )
                         }
@@ -3475,28 +3611,55 @@ fun RecommendationHubScreen(
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Starte den Download aller 3 Komponenten im Hintergrund. Die APK-Installation startet automatisch, sobald der Download beendet ist.",
+                                text = if (egoistProfile?.isConfigured == true) {
+                                    "Starte den Download aller 3 Komponenten im Hintergrund. Die APK-Installation startet automatisch, sobald der Download beendet ist."
+                                } else {
+                                    "Die Geräteintegration ist vorbereitet. Die Cloud-Dateien werden noch verknüpft."
+                                },
                                 style = Typography.bodyMedium.copy(color = TextSecondary, fontSize = 12.sp, lineHeight = 16.sp)
                             )
                             Spacer(modifier = Modifier.height(12.dp))
-                            if (egoistApkStatus == "IDLE" && egoistXmlStatus == "IDLE" && egoistLibStatus == "IDLE") {
+                            val downloadsComplete =
+                                egoistApkStatus == "SUCCESS" &&
+                                    egoistXmlStatus == "SUCCESS" &&
+                                    egoistLibStatus == "SUCCESS"
+                            val downloadsRunning =
+                                egoistApkStatus == "DOWNLOADING" ||
+                                    egoistXmlStatus == "DOWNLOADING" ||
+                                    egoistLibStatus == "DOWNLOADING"
+                            if (!downloadsComplete && !downloadsRunning) {
                                 Button(
                                     onClick = { startEgoistDownloads() },
+                                    enabled = egoistProfile?.isConfigured == true,
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = ApertureGold,
-                                        contentColor = TextOnAccent
+                                        contentColor = TextOnAccent,
+                                        disabledContainerColor = BorderSlate,
+                                        disabledContentColor = TextSecondary
                                     ),
                                     shape = RoundedCornerShape(10.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Text(
-                                        text = "EGOIST-Setup starten",
-                                        style = Typography.labelLarge.copy(fontWeight = FontWeight.Bold, color = TextOnAccent)
+                                        text = when {
+                                            egoistProfile?.isConfigured != true ->
+                                                "Cloud-Dateien noch nicht verknüpft"
+                                            egoistApkStatus == "FAILED" ||
+                                                egoistXmlStatus == "FAILED" ||
+                                                egoistLibStatus == "FAILED" ->
+                                                "Fehlgeschlagene Downloads erneut starten"
+                                            else -> "EGOIST-Setup starten"
+                                        },
+                                        style = Typography.labelLarge.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (egoistProfile?.isConfigured == true) TextOnAccent else TextSecondary
+                                        )
                                     )
                                 }
                             } else {
                                 Button(
                                     onClick = { startEgoistDownloads() },
+                                    enabled = false,
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = BorderSlate,
                                         contentColor = TextSecondary
@@ -3505,7 +3668,11 @@ fun RecommendationHubScreen(
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Text(
-                                        text = "Downloads laufen parallel...",
+                                        text = if (downloadsComplete) {
+                                            "Setup-Dateien bereit ✓"
+                                        } else {
+                                            "Downloads laufen parallel..."
+                                        },
                                         style = Typography.labelLarge.copy(fontWeight = FontWeight.Bold, color = TextSecondary)
                                     )
                                 }
@@ -3516,30 +3683,26 @@ fun RecommendationHubScreen(
 
                 // APK Card
                 item {
-                    val apkName = when (device.id) {
-                        "xiaomi_15_ultra" -> "AGC8.4.300_V9.6_ruler15u.apk"
-                        "xiaomi_14_ultra" -> "AGC8.4.300_V9.6_rulerX14U.apk"
-                        "samsung_s26_ultra" -> "AGC8.4.300_V9.6_ruler.apk"
-                        else -> "AGC8.4.300_V9.6_scan3d.apk"
-                    }
+                    val apkName = egoistProfile?.apk?.fileName ?: "Kamera-APK"
                     EgoistDownloadCard(
                         title = "1. AGC 8.4v9.6 Kamera-APK",
                         progress = egoistApkProgress,
                         status = egoistApkStatus,
                         activeColor = ApertureGold,
                         actionButtonText = "Installieren",
-                        onActionClick = { triggerApkInstallationByName(context, apkName) }
+                        onActionClick = {
+                            triggerApkInstallationByName(
+                                context,
+                                apkName,
+                                egoistDownloadDir
+                            )
+                        }
                     )
                 }
 
                 // XML Card
                 item {
-                    val xmlName = when (device.id) {
-                        "xiaomi_15_ultra" -> "EGOIST_1.2k16_15u_12mp.agc"
-                        "xiaomi_14_ultra" -> "EGOIST_1.2k16_14u_12mp.agc"
-                        "samsung_s26_ultra" -> "EGOISTv44betaAGC8.4v9.6_S26U_test.agc"
-                        else -> "EGOIST_1.2k16_X300P.agc"
-                    }
+                    val xmlName = egoistProfile?.config?.fileName ?: "EGOIST.agc"
                     EgoistDownloadCard(
                         title = "2. EGOIST XML-Konfiguration (.agc)",
                         progress = egoistXmlProgress,
@@ -3553,12 +3716,16 @@ fun RecommendationHubScreen(
                 // LIB Card
                 item {
                     EgoistDownloadCard(
-                        title = "3. Custom Library (shgv1.2k16.so)",
+                        title = "3. Custom Library (${egoistProfile?.library?.fileName ?: "Custom-Library"})",
                         progress = egoistLibProgress,
                         status = egoistLibStatus,
                         activeColor = ZeissCyan,
                         actionButtonText = "Ordner wählen & Speichern",
-                        onActionClick = { saveEgoistLibLauncher.launch("shgv1.2k16.so") }
+                        onActionClick = {
+                            saveEgoistLibLauncher.launch(
+                                egoistProfile?.library?.fileName ?: "shgv1.2k16.so"
+                            )
+                        }
                     )
                 }
 
@@ -3579,7 +3746,10 @@ fun RecommendationHubScreen(
                                     .fillMaxWidth()
                                     .clickable { isProfilesExpanded = !isProfilesExpanded }
                             ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f)
+                                ) {
                                     Icon(
                                         imageVector = Icons.Default.Info,
                                         contentDescription = null,
@@ -3589,12 +3759,17 @@ fun RecommendationHubScreen(
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
                                         text = "🎓 EGOIST Profil-Erklärungen (1-12)",
-                                        style = Typography.titleMedium.copy(color = TextPrimary, fontWeight = FontWeight.Bold)
+                                        style = Typography.titleMedium.copy(color = TextPrimary, fontWeight = FontWeight.Bold),
+                                        maxLines = 2,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
                                     )
                                 }
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = if (isProfilesExpanded) "Einklappen ▲" else "Anzeigen ▼",
-                                    style = Typography.labelMedium.copy(color = ApertureGold, fontWeight = FontWeight.Bold)
+                                    style = Typography.labelMedium.copy(color = ApertureGold, fontWeight = FontWeight.Bold),
+                                    maxLines = 1
                                 )
                             }
                             
@@ -3661,32 +3836,23 @@ fun RecommendationHubScreen(
 
                             Spacer(modifier = Modifier.height(16.dp))
 
-                            val xmlName = when (device.id) {
-                                "xiaomi_15_ultra" -> "EGOIST_1.2k16_15u_12mp.agc"
-                                "xiaomi_14_ultra" -> "EGOIST_1.2k16_14u_12mp.agc"
-                                "samsung_s26_ultra" -> "EGOISTv44betaAGC8.4v9.6_S26U_test.agc"
-                                else -> "EGOIST_1.2k16_X300P.agc"
-                            }
-                            val deviceDisplayName = when (device.id) {
-                                "xiaomi_15_ultra" -> "XIAOMI 15 ULTRA"
-                                "xiaomi_14_ultra" -> "XIAOMI 14 ULTRA"
-                                "samsung_s26_ultra" -> "SAMSUNG S26 Ultra"
-                                else -> "VIVO X300 Pro"
-                            }
+                            val xmlName = egoistProfile?.config?.fileName ?: "EGOIST.agc"
+                            val libraryName = egoistProfile?.library?.fileName ?: "shgv1.2k16.so"
+                            val deviceDisplayName = egoistProfile?.displayName ?: device.name
 
                             val steps = listOf(
                                 "App-Berechtigungen gewähren" to "Nach der Installation der AGC 8.4 App diese starten und alle angeforderten Berechtigungen (Kamera, Speicher, Mikrofon) erteilen.",
                                 "Schnellmenü öffnen" to "Tippe oben links auf dem Hauptbildschirm der Kamera auf das Zahnrad-Symbol.",
                                 "Weitere Einstellungen aufrufen" to "Wähle im geöffneten Ausklappmenü ganz unten rechts den Punkt 'Weitere Einstellungen' aus.",
                                 "Library-Kopierer aufrufen" to "Scrolle nach unten, wähle den Bereich 'Libraries' und tippe auf 'Copy third-party lib to app'.",
-                                "Custom-Library (.so) auswählen" to "Navigiere im System-Dateidialog zu der gespeicherten 'shgv1.2k16.so' Datei und wähle diese aus.",
+                                "Custom-Library (.so) auswählen" to "Navigiere im System-Dateidialog zu der gespeicherten '$libraryName' Datei und wähle diese aus.",
                                 "XML-Importbereich öffnen" to "Gehe in den 'Weitere Einstellungen' zurück, scrolle zum Bereich 'Configs' und tippe auf 'Import'.",
                                 "EGOIST XML (.agc) auswählen" to "Wähle im Dateimanager die gespeicherte Konfigurationsdatei '$xmlName' aus.",
                                 "Zum Hauptbildschirm zurückkehren" to "Drücke die Zurück-Taste deines Smartphones, um zum Hauptbildschirm der GCam zurückzukehren.",
                                 "Schnell-Konfiguration laden" to "Tippe erneut oben links auf das Zahnrad-Symbol und wähle unten links die Option 'Load Configs'.",
                                 "EGOIST Konfiguration laden" to "Wähle die importierte '$xmlName' aus und bestätige den Vorgang mit 'Load'.",
                                 "Erneut in die tiefen Einstellungen" to "Gehe wieder oben links auf das Zahnrad-Symbol und tippe unten rechts erneut auf 'Weitere Einstellungen'.",
-                                "Custom-Library aktivieren" to "Wähle 'Libraries' und tippe oben auf 'Load custom library'. Wähle 'shgv1.2k16.so' aus. WICHTIG: Mache diesen Schritt zwingend 2x hintereinander!",
+                                "Custom-Library aktivieren" to "Wähle 'Libraries' und tippe oben auf 'Load custom library'. Wähle '$libraryName' aus. WICHTIG: Mache diesen Schritt zwingend 2x hintereinander!",
                                 "Zurück zum Hauptbildschirm" to "Gehe zurück zum Hauptbildschirm. Die Library und XML-Konfiguration sind nun aktiv geladen.",
                                 "Enjoy EGOIST!" to "Viel Spaß mit extremer Schärfe, lebendigen Zeiss-Farben und optimiertem Rauschen auf deinem $deviceDisplayName!"
                             )
@@ -4014,10 +4180,17 @@ fun RecommendationHubScreen(
                                     typeLabel = "GCAM-KAMERA-PORT",
                                     title = "${recommendation.gcamName} ${recommendation.gcamVersion}",
                                     subtitle = "Portiert von ${recommendation.gcamDeveloper}",
-                                    description = "Stabiler Build für ${device.name}. Beinhaltet alle notwendigen Linsen-Freischaltungen und Kamera2API-Patches.",
-                                    buttonText = "GCam APK in Downloads speichern",
+                                    description = "Die für ${device.name} mitgelieferte APK. Vor dem Export wird exakt die hinterlegte SHA-256-Prüfsumme kontrolliert.",
+                                    buttonText = "Mitgelieferte APK speichern",
                                     buttonColor = ApertureGold,
-                                    onDownloadClick = { startApkDownload(recommendation.gcamDownloadUrl, "${recommendation.gcamName}_${recommendation.gcamVersion}.apk") },
+                                    onDownloadClick = {
+                                        startApkDownload(
+                                            url = recommendation.gcamDownloadUrl,
+                                            fileName = egoistProfile?.apk?.fileName
+                                                ?: "${recommendation.gcamName}_${recommendation.gcamVersion}.apk",
+                                            expectedSha256 = egoistProfile?.apk?.sha256
+                                        )
+                                    },
                                     downloadProgress = apkDownloadProgress,
                                     downloadStatus = apkDownloadStatus
                                 )
@@ -4026,13 +4199,19 @@ fun RecommendationHubScreen(
                             // 2. XML Configuration Card
                             item {
                                 DownloadItemCard(
-                                    typeLabel = "KALIBRIERUNGS-XML",
+                                    typeLabel = "AGC-KONFIGURATION",
                                     title = recommendation.xmlName,
-                                    subtitle = "Spezielles XML für Foto-Aufnahmen",
+                                    subtitle = "Gerätespezifische Originaldatei",
                                     description = recommendation.xmlDescription,
-                                    buttonText = "XML direkt in GCam-Ordner speichern",
+                                    buttonText = "SHA-geprüfte Config speichern",
                                     buttonColor = ZeissCyan,
-                                    onDownloadClick = { startXmlDownload(recommendation.xmlDownloadUrl, recommendation.xmlName) },
+                                    onDownloadClick = {
+                                        startXmlDownload(
+                                            url = recommendation.xmlDownloadUrl,
+                                            fileName = recommendation.xmlName,
+                                            expectedSha256 = egoistProfile?.config?.sha256
+                                        )
+                                    },
                                     downloadProgress = xmlDownloadProgress,
                                     downloadStatus = xmlDownloadStatus
                                 )
@@ -5426,8 +5605,8 @@ fun ToolsHubDashboard(
             tagText = "AUTOMATISCHER SYNC",
             tagColor = ApertureGold,
             title = "Config Auto-Update Checker",
-            subtitle = "Abgleich mit dem Cloud-Repository",
-            description = "Prüfe, ob deine installierten XML-Setups noch aktuell sind oder ob verbesserte Rauschmodelle und Fokus-Tabellen online im GDrive-Repository verfügbar sind.",
+            subtitle = "Gerätespezifischer SHA-256-Abgleich",
+            description = "Prüft lokale Configs gegen die bekannten SHA-256-Prüfsummen der tatsächlich mitgelieferten Originaldateien und lädt ausschließlich diese Pakete.",
             buttonText = "Updates prüfen",
             buttonColor = ApertureGold,
             onClick = onOpenUpdateChecker
@@ -7018,6 +7197,7 @@ data class OnlineConfigProfile(
     val filename: String,
     val onlineVersion: String,
     val gdriveId: String,
+    val sha256: String,
     val description: String,
     val targetFolder: String
 )
@@ -7031,50 +7211,81 @@ fun ConfigUpdateCheckerSheet(
     recommendation: GcamRecommendation?
 ) {
     val coroutineScope = rememberCoroutineScope()
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     var isPermissionGranted by remember { mutableStateOf(hasPermission()) }
     
     // Status dictionary for installed profiles
     val installationStatus = remember { mutableStateMapOf<String, String>() }
     var activeProgressKey by remember { mutableStateOf<String?>(null) }
     var isChecking by remember { mutableStateOf(false) }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                isPermissionGranted = hasPermission()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
     
-    val officialProfiles = remember {
+    val officialProfiles = remember(recommendation?.deviceId) {
         val list = mutableListOf<OnlineConfigProfile>()
-        if (recommendation != null) {
+        val currentEgoistProfile = recommendation?.deviceId?.let(EgoistProfiles::forDevice)
+        if (currentEgoistProfile != null) {
             list.add(
                 OnlineConfigProfile(
                     key = "current",
-                    displayName = "Empfohlene XML für ${recommendation.xmlName}",
-                    filename = recommendation.xmlName,
-                    onlineVersion = "v8.5 (Latest)",
-                    gdriveId = "1BqJKewk4RKPlTWw667dk9GHn9mbsEeFg",
-                    description = "Dein aktives empfohlenes Profil für optimale Farbtreue und Dynamic Range.",
-                    targetFolder = "LMC8.4"
+                    displayName = "EGOIST für ${currentEgoistProfile.displayName}",
+                    filename = currentEgoistProfile.config.fileName,
+                    onlineVersion = "SHA-verifiziert",
+                    gdriveId = currentEgoistProfile.config.googleDriveFileId,
+                    sha256 = checkNotNull(currentEgoistProfile.config.sha256),
+                    description = "Die mitgelieferte gerätespezifische AGC-Konfiguration. Die Datei wird unverändert anhand ihrer SHA-256-Prüfsumme geprüft.",
+                    targetFolder = "Download"
                 )
             )
         }
-        list.add(
-            OnlineConfigProfile(
-                key = "rifanda",
-                displayName = "Rifanda Adam Mod Setup",
-                filename = "RIFANDA-17U.xml",
-                onlineVersion = "v3.2 (Latest)",
-                gdriveId = "1udhLjTp2UUj55zqdkiXEwC9Z1oLG9wBj",
-                description = "Das beliebte Master-Profil von Rifanda basierend auf dem LMC 8.3 Port.",
-                targetFolder = "LMC8.3"
+        if (recommendation?.deviceId == "xiaomi_17_ultra") {
+            list.add(
+                OnlineConfigProfile(
+                    key = "j0qz84",
+                    displayName = "J0qZ für LMC 8.4",
+                    filename = "J0qZ84x-17U.xml",
+                    onlineVersion = "SHA-verifiziert",
+                    gdriveId = "1t60UoNRKZHZXvBhxMfpdg2ebpmUiMQAy",
+                    sha256 = "97034d90d94030346980fc36fa581a9431afd6d6f047a3a0b357adc08e52c1df",
+                    description = "Mitgeliefertes J0qZ-Profil für den LMC-8.4-Port des Xiaomi 17 Ultra.",
+                    targetFolder = "LMC8.4"
+                )
             )
-        )
-        list.add(
-            OnlineConfigProfile(
-                key = "leitz",
-                displayName = "Leitz Set Specialist",
-                filename = "Leitz_Set.xml",
-                onlineVersion = "v8.0 (Latest)",
-                gdriveId = "1d6bXKuOQD3OeKMr-Nphx7Xu5GbNvfZ7Z",
-                description = "Erweiterte Leica-Vignettierung und Rauschkalibrierungen.",
-                targetFolder = "LMC8.4"
+            list.add(
+                OnlineConfigProfile(
+                    key = "j0qz83",
+                    displayName = "J0qZ für LMC 8.3",
+                    filename = "J0qZ83x-17U.xml",
+                    onlineVersion = "SHA-verifiziert",
+                    gdriveId = "1TIeEBkt1dNdM6E2N22dOHgE9q5YNMepW",
+                    sha256 = "238930a445a706ca499c067d50e194ec99ae64605fdc196592460c9077cecb20",
+                    description = "Mitgeliefertes J0qZ-Profil für den LMC-8.3-Port des Xiaomi 17 Ultra.",
+                    targetFolder = "LMC8.3"
+                )
             )
-        )
+            list.add(
+                OnlineConfigProfile(
+                    key = "rifanda",
+                    displayName = "Rifanda Adam Mod Setup",
+                    filename = "Rifanda-17U.xml",
+                    onlineVersion = "SHA-verifiziert",
+                    gdriveId = "1udhLjTp2UUj55zqdkiXEwC9Z1oLG9wBj",
+                    sha256 = "d5fe485b3ad12f17ae22ade08b8cff0f279aeb3f3112c4a0e7a4dd2bd110cc9f",
+                    description = "Mitgeliefertes Rifanda-Profil für den LMC-8.3-Port des Xiaomi 17 Ultra.",
+                    targetFolder = "LMC8.3"
+                )
+            )
+        }
         list
     }
     
@@ -7082,22 +7293,21 @@ fun ConfigUpdateCheckerSheet(
         if (hasPermission()) {
             isChecking = true
             coroutineScope.launch {
-                withContext(Dispatchers.IO) {
+                val checkedStatuses = withContext(Dispatchers.IO) {
                     val extRoot = android.os.Environment.getExternalStorageDirectory()
-                    for (profile in officialProfiles) {
+                    officialProfiles.associate { profile ->
                         val file = java.io.File(java.io.File(extRoot, profile.targetFolder), profile.filename)
-                        if (file.exists()) {
-                            // High fidelity comparison - show current as outdated for update illustration
-                            if (profile.key == "current") {
-                                installationStatus[profile.key] = "OUTDATED"
-                            } else {
-                                installationStatus[profile.key] = "UP_TO_DATE"
-                            }
+                        val status = if (!file.isFile) {
+                            "NOT_INSTALLED"
+                        } else if (file.sha256() == profile.sha256) {
+                            "UP_TO_DATE"
                         } else {
-                            installationStatus[profile.key] = "NOT_INSTALLED"
+                            "OUTDATED"
                         }
+                        profile.key to status
                     }
                 }
+                installationStatus.putAll(checkedStatuses)
                 isChecking = false
             }
         }
@@ -7113,72 +7323,61 @@ fun ConfigUpdateCheckerSheet(
         activeProgressKey = profile.key
         coroutineScope.launch {
             val success = withContext(Dispatchers.IO) {
-                try {
-                    // Simulated download wait for visual high-fidelity experience
-                    kotlinx.coroutines.delay(1200)
-                    
-                    val urlStr = "https://docs.google.com/uc?export=download&confirm=t&id=${profile.gdriveId}"
-                    val url = java.net.URL(urlStr)
-                    val conn = url.openConnection() as java.net.HttpURLConnection
-                    conn.connectTimeout = 5000
-                    conn.connect()
-                    if (conn.responseCode == java.net.HttpURLConnection.HTTP_OK) {
-                        val cacheFile = java.io.File(context.cacheDir, profile.filename)
-                        val outStream = java.io.FileOutputStream(cacheFile)
-                        val inStream = conn.inputStream
-                        try {
-                            inStream.copyTo(outStream)
-                        } finally {
-                            try { inStream.close() } catch (e: Exception) {}
-                            try { outStream.close() } catch (e: Exception) {}
+                runCatching {
+                    val cacheFile = java.io.File(context.cacheDir, "${profile.filename}.part")
+                    val url = java.net.URL(
+                        "https://drive.usercontent.google.com/download?id=${profile.gdriveId}&export=download&confirm=t"
+                    )
+                    val connection = url.openConnection() as java.net.HttpURLConnection
+                    try {
+                        connection.instanceFollowRedirects = true
+                        connection.connectTimeout = 15000
+                        connection.readTimeout = 15000
+                        connection.connect()
+                        check(connection.responseCode == java.net.HttpURLConnection.HTTP_OK) {
+                            "HTTP ${connection.responseCode}"
                         }
-                        
+                        check(!connection.contentType.orEmpty().contains("text/html", ignoreCase = true)) {
+                            "Google Drive lieferte keine Konfigurationsdatei."
+                        }
+                        connection.inputStream.use { input ->
+                            cacheFile.outputStream().use { output ->
+                                input.copyTo(output)
+                                output.flush()
+                            }
+                        }
+                        check(cacheFile.sha256() == profile.sha256) {
+                            "SHA-256-Prüfung fehlgeschlagen."
+                        }
+
                         val externalRoot = android.os.Environment.getExternalStorageDirectory()
                         val targetDir = java.io.File(externalRoot, profile.targetFolder)
-                        if (!targetDir.exists()) {
-                            targetDir.mkdirs()
+                        check(targetDir.isDirectory || targetDir.mkdirs()) {
+                            "Zielordner konnte nicht angelegt werden."
                         }
                         val targetFile = java.io.File(targetDir, profile.filename)
-                        val inStream2 = java.io.FileInputStream(cacheFile)
-                        val outStream2 = java.io.FileOutputStream(targetFile)
-                        try {
-                            inStream2.copyTo(outStream2)
-                        } finally {
-                            try { inStream2.close() } catch (e: Exception) {}
-                            try { outStream2.close() } catch (e: Exception) {}
+                        cacheFile.inputStream().use { input ->
+                            targetFile.outputStream().use { output ->
+                                input.copyTo(output)
+                                output.flush()
+                            }
                         }
-                        true
-                    } else {
-                        // Safe fallback XML string generator
-                        val dummyXml = """
-                            <?xml version='1.0' encoding='utf-8' standalone='yes' ?>
-                            <map>
-                                <string name="profile">${profile.displayName}</string>
-                                <string name="version">${profile.onlineVersion}</string>
-                                <string name="author">GCamFinder</string>
-                            </map>
-                        """.trimIndent()
-                        val cacheFile = java.io.File(context.cacheDir, profile.filename)
-                        cacheFile.writeText(dummyXml)
-                        
-                        val externalRoot = android.os.Environment.getExternalStorageDirectory()
-                        val targetDir = java.io.File(externalRoot, profile.targetFolder)
-                        if (!targetDir.exists()) targetDir.mkdirs()
-                        val targetFile = java.io.File(targetDir, profile.filename)
-                        targetFile.writeText(dummyXml)
-                        true
+                        check(targetFile.sha256() == profile.sha256) {
+                            "Prüfung der gespeicherten Zieldatei fehlgeschlagen."
+                        }
+                    } finally {
+                        connection.disconnect()
+                        cacheFile.delete()
                     }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    false
-                }
+                    true
+                }.onFailure(Throwable::printStackTrace).getOrDefault(false)
             }
             activeProgressKey = null
             if (success) {
-                android.widget.Toast.makeText(context, "${profile.filename} erfolgreich aktualisiert! ✓", android.widget.Toast.LENGTH_SHORT).show()
+                android.widget.Toast.makeText(context, "${profile.filename} SHA-geprüft gespeichert! ✓", android.widget.Toast.LENGTH_SHORT).show()
                 installationStatus[profile.key] = "UP_TO_DATE"
             } else {
-                android.widget.Toast.makeText(context, "Download fehlgeschlagen.", android.widget.Toast.LENGTH_SHORT).show()
+                android.widget.Toast.makeText(context, "Download oder SHA-256-Prüfung fehlgeschlagen.", android.widget.Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -7218,7 +7417,7 @@ fun ConfigUpdateCheckerSheet(
                             style = Typography.titleLarge.copy(color = TextPrimary, fontWeight = FontWeight.Bold)
                         )
                         Text(
-                            text = "Automatischer XML GDrive-Repository-Abgleich",
+                            text = "Gerätespezifischer SHA-256-Abgleich",
                             style = Typography.bodyMedium.copy(color = TextSecondary, fontSize = 11.sp)
                         )
                     }
@@ -7271,10 +7470,6 @@ fun ConfigUpdateCheckerSheet(
                             Button(
                                 onClick = { 
                                     requestPermission()
-                                    coroutineScope.launch {
-                                        kotlinx.coroutines.delay(1000)
-                                        isPermissionGranted = hasPermission()
-                                    }
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = ZeissCyan, contentColor = AmoledBlack),
                                 shape = RoundedCornerShape(12.dp)
@@ -7313,7 +7508,7 @@ fun ConfigUpdateCheckerSheet(
                                     )
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
-                                        text = "Der Auto-Updater scannt deine lokalen Configs und vergleicht sie mit den neuesten Releases des GDrive Repositories. Updates enthalten verbesserte AWB Kalibrierungen und optimierte PixelBinning-Matrizen.",
+                                        text = "Der Auto-Updater vergleicht die lokale Datei mit der bekannten SHA-256-Prüfsumme der mitgelieferten Original-Config. Für das Xiaomi 17 Ultra werden zusätzlich die tatsächlich gelieferten J0qZ- und Rifanda-Profile angeboten.",
                                         style = Typography.bodyMedium.copy(color = TextSecondary, fontSize = 12.sp, lineHeight = 16.sp)
                                     )
                                     
@@ -7336,7 +7531,7 @@ fun ConfigUpdateCheckerSheet(
                         item {
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "OFFIZIELLE REPOSITORY PROFILE",
+                                text = "MITGELIEFERTE, SHA-GEPRÜFTE PROFILE",
                                 style = Typography.labelMedium.copy(color = ApertureGold, fontWeight = FontWeight.Bold, fontSize = 9.sp)
                             )
                         }
@@ -7464,5 +7659,3 @@ fun ConfigUpdateCheckerSheet(
         }
     }
 }
-
-

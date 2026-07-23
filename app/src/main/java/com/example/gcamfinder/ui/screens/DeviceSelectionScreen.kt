@@ -35,6 +35,30 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+private fun isNewerVersion(latestVersion: String, currentVersion: String): Boolean {
+    fun numericParts(version: String): List<Int> {
+        return version
+            .trim()
+            .lowercase()
+            .removePrefix("v")
+            .split(".")
+            .map { part -> part.takeWhile(Char::isDigit).toIntOrNull() ?: 0 }
+    }
+
+    val latestParts = numericParts(latestVersion)
+    val currentParts = numericParts(currentVersion)
+    val partCount = maxOf(latestParts.size, currentParts.size)
+
+    for (index in 0 until partCount) {
+        val latestPart = latestParts.getOrElse(index) { 0 }
+        val currentPart = currentParts.getOrElse(index) { 0 }
+        if (latestPart != currentPart) {
+            return latestPart > currentPart
+        }
+    }
+    return false
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DeviceSelectionScreen(
@@ -94,7 +118,7 @@ fun DeviceSelectionScreen(
                     val cleanTag = tagVal.trim().lowercase().removePrefix("v")
                     val cleanLocal = currentVersion.trim().lowercase().removePrefix("v")
 
-                    if (cleanTag.isNotBlank() && cleanTag != cleanLocal) {
+                    if (cleanTag.isNotBlank() && isNewerVersion(cleanTag, cleanLocal)) {
                         latestVersion = tagVal
                         releaseNotes = bodyVal.ifBlank { "Systemoptimierungen und neue Sensorunterstützung." }
                         downloadUrl = apkUrl
